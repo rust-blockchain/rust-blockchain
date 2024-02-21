@@ -1,9 +1,0 @@
-[package]
-name = "blockchain-network-local"
-version = "0.1.0"
-authors = ["Wei Tang <hi@that.world>"]
-edition = "2018"
-
-[dependencies]
-blockchain-network = { version = "0.1", path = ".." }
-blockchain = { version = "0.9", path = "../.." }
