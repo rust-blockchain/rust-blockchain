@@ -2,4 +2,7 @@
 
 #![warn(missing_docs)]
 
-pub use blockchain_core::*;
+mod block;
+mod chain;
+
+pub use crate::block::{Headered, Identified, Keyed};

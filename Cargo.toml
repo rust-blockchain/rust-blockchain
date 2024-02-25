@@ -1,6 +1,5 @@
 [workspace]
 members = [
 	"blockchain",
-	"blockchain/core",
 	"tinyjam",
 ]
