@@ -1,27 +1,50 @@
 use crate::Identified;
 
-/// A structure representing a chain with possible forks.
+/// Fork tree.
+///
+/// A fork tree tracks blocks of forks. However, it does not track the best
+/// block. Instead, that is supposed to be handled by the `Chain` directly. The
+/// reason for this is that, except storing the best block hash, the majority of
+/// best block tracking is used for optimizations -- rebalancing the trees,
+/// moving non-canon blocks out of cache, pruning nodes, etc. They are not only
+/// needed in a fork tree, but also in states, as well as other related structs.
 pub trait ForkTree {
     /// The type of the identified. It can be a block or a header.
     type Block: Identified;
+    /// Query error type.
+    type QueryError;
 
-    /// Best block.
-    fn best(&self) -> &Self::Block;
+    /// Get a block by its id.
+    fn block_by_id(
+        &self,
+        id: <Self::Block as Identified>::Identifier,
+    ) -> Result<Self::Block, Self::QueryError>;
+    /// Get current best block.
+    fn best(&self) -> Self::Block;
+}
+
+/// A structure representing a chain with possible forks.
+pub trait ForkTreeMut: ForkTree {
+    /// Insert error type.
+    type InsertError;
+
+    /// Insert a new block.
+    fn insert(&mut self, block: Self::Block, is_new_best: bool) -> Result<(), Self::InsertError>;
 }
 
 /// A chain that can import external blocks.
-pub trait ImportBlock<F: ForkTree<Block = Self::Block>> {
+pub trait ImportBlock {
     /// Type of the block.
     type Block;
     /// Error type.
     type Error;
 
     /// Import a new block, given a fork tree.
-    fn import(&mut self, tree: &mut F, block: Self::Block) -> Result<(), Self::Error>;
+    fn import(&mut self, block: Self::Block) -> Result<(), Self::Error>;
 }
 
 /// A chain that can build new blocks.
-pub trait BuildBlock<F: ForkTree<Block = Self::Block>> {
+pub trait BuildBlock {
     /// Type of the block.
     type Block: Identified;
     /// Type of the builder.
@@ -31,9 +54,8 @@ pub trait BuildBlock<F: ForkTree<Block = Self::Block>> {
 
     /// Initialize building a new block, with the given fork tree, on top of the
     /// given block hash.
-    fn build<'a, 'b, 'builder: 'a + 'b>(
+    fn build<'a, 'builder: 'a>(
         &'a mut self,
-        tree: &'b mut F,
         parent_id: <Self::Block as Identified>::Identifier,
     ) -> Result<Self::Builder<'builder>, Self::Error>;
 }

@@ -4,7 +4,7 @@
 /// The hash of a block is unique.
 pub trait Identified {
     /// Identifier type.
-    type Identifier;
+    type Identifier: Clone + Copy + Eq + PartialEq + core::hash::Hash;
 
     /// Get the block hash.
     fn id(&self) -> Self::Identifier;
