@@ -9,3 +9,4 @@ mod state;
 
 pub use crate::block::{Headered, Identified, Keyed};
 pub use crate::chain::{BlockBuilder, BuildBlock, ForkTree, ForkTreeMut, ImportBlock};
+pub use crate::state::FlatState;

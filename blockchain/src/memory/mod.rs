@@ -43,7 +43,7 @@ impl<Block: Identified + Clone> ForkTree for MemoryForkTree<Block> {
     type Block = Block;
     type QueryError = MemoryForkTreeQueryError;
 
-    fn block(&self, id: Block::Identifier) -> Result<Block, Self::QueryError> {
+    fn block(&self, id: &Block::Identifier) -> Result<Block, Self::QueryError> {
         Ok(self
             .blocks
             .get(&id)
@@ -52,7 +52,7 @@ impl<Block: Identified + Clone> ForkTree for MemoryForkTree<Block> {
             .clone())
     }
 
-    fn block_depth(&self, id: Block::Identifier) -> Result<usize, Self::QueryError> {
+    fn block_depth(&self, id: &Block::Identifier) -> Result<usize, Self::QueryError> {
         Ok(self
             .blocks
             .get(&id)
@@ -62,7 +62,7 @@ impl<Block: Identified + Clone> ForkTree for MemoryForkTree<Block> {
 
     fn ancestor_id_at_depth(
         &self,
-        id: Block::Identifier,
+        id: &Block::Identifier,
         ancestor_depth: usize,
     ) -> Result<Block::Identifier, Self::QueryError> {
         let mut current_block = self
@@ -181,7 +181,7 @@ impl<Block: Identified + Clone> ForkTreeMut for MemoryForkTree<Block> {
             for ancestor_depth in ancestor_depths {
                 ancestors.push((
                     ancestor_depth,
-                    self.ancestor_id_at_depth(parent_id, ancestor_depth)?,
+                    self.ancestor_id_at_depth(&parent_id, ancestor_depth)?,
                 ));
             }
 

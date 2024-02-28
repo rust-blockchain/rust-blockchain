@@ -17,21 +17,32 @@ pub trait ForkTree {
     /// Get a block by its id.
     fn block(
         &self,
-        id: <Self::Block as Identified>::Identifier,
+        id: &<Self::Block as Identified>::Identifier,
     ) -> Result<Self::Block, Self::QueryError>;
 
     /// Get a block depth by its id.
     fn block_depth(
         &self,
-        id: <Self::Block as Identified>::Identifier,
+        id: &<Self::Block as Identified>::Identifier,
     ) -> Result<usize, Self::QueryError>;
 
     /// Find an ancestor block at given depth.
     fn ancestor_id_at_depth(
         &self,
-        id: <Self::Block as Identified>::Identifier,
+        id: &<Self::Block as Identified>::Identifier,
         ancestor_depth: usize,
     ) -> Result<<Self::Block as Identified>::Identifier, Self::QueryError>;
+
+    /// Whether is ancestor.
+    fn is_ancestor(
+        &self,
+        id: &<Self::Block as Identified>::Identifier,
+        ancestor_id: &<Self::Block as Identified>::Identifier,
+    ) -> Result<bool, Self::QueryError> {
+        let ancestor_depth = self.block_depth(ancestor_id)?;
+
+        Ok(self.ancestor_id_at_depth(id, ancestor_depth)? == *ancestor_id)
+    }
 }
 
 /// A structure representing a chain with possible forks.
