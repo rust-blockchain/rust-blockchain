@@ -15,12 +15,23 @@ pub trait ForkTree {
     type QueryError;
 
     /// Get a block by its id.
-    fn block_by_id(
+    fn block(
         &self,
         id: <Self::Block as Identified>::Identifier,
     ) -> Result<Self::Block, Self::QueryError>;
-    /// Get current best block.
-    fn best(&self) -> Self::Block;
+
+    /// Get a block depth by its id.
+    fn block_depth(
+        &self,
+        id: <Self::Block as Identified>::Identifier,
+    ) -> Result<usize, Self::QueryError>;
+
+    /// Find an ancestor block at given depth.
+    fn ancestor_id_at_depth(
+        &self,
+        id: <Self::Block as Identified>::Identifier,
+        ancestor_depth: usize,
+    ) -> Result<<Self::Block as Identified>::Identifier, Self::QueryError>;
 }
 
 /// A structure representing a chain with possible forks.
@@ -29,7 +40,7 @@ pub trait ForkTreeMut: ForkTree {
     type InsertError;
 
     /// Insert a new block.
-    fn insert(&mut self, block: Self::Block, is_new_best: bool) -> Result<(), Self::InsertError>;
+    fn insert(&mut self, block: Self::Block) -> Result<(), Self::InsertError>;
 }
 
 /// A chain that can import external blocks.
