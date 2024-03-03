@@ -8,5 +8,5 @@ pub mod memory;
 mod state;
 
 pub use crate::block::{Headered, Identified, Keyed};
-pub use crate::chain::{BlockBuilder, BuildBlock, ForkTree, ForkTreeMut, ImportBlock};
-pub use crate::state::FlatState;
+pub use crate::chain::{BlockBuilder, ForkTree, ForkTreeMut, ForkTreeTransactional, ImportBlock};
+pub use crate::state::{FlatState, FlatStateMut, FlatStateTransactional, OverlayedFlatState};

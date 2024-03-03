@@ -54,6 +54,21 @@ pub trait ForkTreeMut: ForkTree {
     fn insert(&mut self, block: Self::Block) -> Result<(), Self::InsertError>;
 }
 
+/// Transactional fork tree.
+pub trait ForkTreeTransactional: ForkTree {
+    /// Transaction type.
+    type Transaction;
+    /// Insert error type.
+    type InsertError;
+
+    /// Insert a new block.
+    fn insert(
+        &self,
+        transaction: &mut Self::Transaction,
+        block: Self::Block,
+    ) -> Result<(), Self::InsertError>;
+}
+
 /// A chain that can import external blocks.
 pub trait ImportBlock {
     /// Type of the block.
@@ -65,34 +80,29 @@ pub trait ImportBlock {
     fn import(&mut self, block: Self::Block) -> Result<(), Self::Error>;
 }
 
-/// A chain that can build new blocks.
-pub trait BuildBlock {
+/// Block builder.
+pub trait BlockBuilder<'chain>: Sized {
+    /// Type of the chain.
+    type Chain;
     /// Type of the block.
     type Block: Identified;
-    /// Type of the builder.
-    type Builder<'builder>: BlockBuilder<Block = Self::Block>;
-    /// Error type.
-    type Error;
-
-    /// Initialize building a new block, with the given fork tree, on top of the
-    /// given block hash.
-    fn build<'a, 'builder: 'a>(
-        &'a mut self,
-        parent_id: <Self::Block as Identified>::Identifier,
-    ) -> Result<Self::Builder<'builder>, Self::Error>;
-}
-
-/// Block builder.
-pub trait BlockBuilder {
-    /// Type of the block.
-    type Block;
     /// Type of extrinsic.
     type Extrinsic;
     /// Type of error.
     type Error;
+    /// Type of pre-log.
+    type PreLog;
+    /// Type of post-log.
+    type PostLog;
 
+    /// Initialize a new block.
+    fn initialize(
+        chain: &'chain Self::Chain,
+        parent_id: <Self::Block as Identified>::Identifier,
+        pre_log: Self::PreLog,
+    ) -> Result<Self, Self::Error>;
     /// Apply a new extrinsic.
     fn apply_extrinsic(&mut self, extrinsic: Self::Extrinsic) -> Result<(), Self::Error>;
-    /// Finalize and import the current block.
-    fn finalize_and_import(self) -> Result<Self::Block, Self::Error>;
+    /// Finalize the current block.
+    fn finalize(self, post_log: Self::PostLog) -> Result<Self::Block, Self::Error>;
 }

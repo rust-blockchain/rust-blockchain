@@ -28,7 +28,7 @@ pub trait Keyed<Key> {
 /// "boundary" of a header and a body.
 pub trait Headered {
     /// Header type.
-    type Header: Clone + Eq;
+    type Header;
 
     /// Get the block header.
     fn header(&self) -> Self::Header;
