@@ -68,7 +68,7 @@ impl<Block: Identified + Clone> ForkTree for MemoryForkTree<Block> {
             .get(&id)
             .ok_or(MemoryForkTreeQueryError::UnknownBlock)?;
 
-        if current_block.depth >= ancestor_depth {
+        if current_block.depth > ancestor_depth {
             return Err(MemoryForkTreeQueryError::InvalidAncestorDepth);
         }
 

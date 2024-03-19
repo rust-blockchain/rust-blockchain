@@ -245,5 +245,23 @@ fn basic_build_and_import() -> Result<(), ChainError> {
         Ok::<_, ChainError>(())
     })?;
 
+    // Build a new block.
+    let mut builder = ChainBlockBuilder::initialize(&chain, genesis_block.id(), ())?;
+    builder.apply_extrinsic(Extrinsic::Set(100, 200))?;
+    let block = builder.finalize(Seal::ValidSeal)?;
+
+    // Import the block.
+    chain.import(block.clone())?;
+
+    // Check that the state is actually set.
+    assert_eq!(
+        chain.data.state.get(&100, &genesis_block.id(), &chain.data.fork_tree)?,
+        Some(100),
+    );
+    assert_eq!(
+        chain.data.state.get(&100, &block.id(), &chain.data.fork_tree)?,
+        Some(200),
+    );
+
     Ok(())
 }

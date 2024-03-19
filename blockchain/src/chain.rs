@@ -27,6 +27,8 @@ pub trait ForkTree {
     ) -> Result<usize, Self::QueryError>;
 
     /// Find an ancestor block at given depth.
+    ///
+    /// If ancestor depth equals the provided block's depth, return the provided block ID.
     fn ancestor_id_at_depth(
         &self,
         id: &<Self::Block as Identified>::Identifier,
@@ -34,6 +36,8 @@ pub trait ForkTree {
     ) -> Result<<Self::Block as Identified>::Identifier, Self::QueryError>;
 
     /// Whether is ancestor.
+    ///
+    /// If ancestor depth equals the provided block's depth, return true.
     fn is_ancestor(
         &self,
         id: &<Self::Block as Identified>::Identifier,
