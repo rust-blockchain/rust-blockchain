@@ -10,6 +10,20 @@ pub struct MemoryFlatState<K, V, Identifier> {
     state: HashMap<K, BTreeMap<usize, HashMap<Identifier, Option<V>>>>,
 }
 
+impl<K, V, Identifier> MemoryFlatState<K, V, Identifier>
+where
+    K: Eq + PartialEq + Hash,
+    V: Clone,
+    Identifier: Eq + PartialEq + Hash + Clone,
+{
+    /// Create a new empty flat state.
+    pub fn new() -> Self {
+        Self {
+            state: HashMap::new(),
+        }
+    }
+}
+
 impl<K, V, Identifier, FT, B> FlatState<FT> for MemoryFlatState<K, V, Identifier>
 where
     K: Eq + PartialEq + Hash,
