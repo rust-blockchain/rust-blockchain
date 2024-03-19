@@ -29,6 +29,7 @@ impl<Block: Identified> MemoryForkTree<Block> {
 }
 
 /// Query error for memory fork tree.
+#[derive(Debug, Clone)]
 pub enum MemoryForkTreeQueryError {
     /// Block is unknown.
     UnknownBlock,
@@ -114,6 +115,7 @@ impl<Block: Identified + Clone> ForkTree for MemoryForkTree<Block> {
 }
 
 /// Insert error for memory fork tree.
+#[derive(Debug, Clone)]
 pub enum MemoryForkTreeInsertError {
     /// Parent is unknown.
     UnknownParent,

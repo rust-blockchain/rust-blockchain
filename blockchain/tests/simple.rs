@@ -94,6 +94,7 @@ pub struct Chain {
     pub data: MemoryTransactional<ChainData>,
 }
 
+#[derive(Debug, Clone)]
 pub enum ChainError {
     InvalidSeal,
     CantImportGenesis,
@@ -199,4 +200,50 @@ impl<'chain> BlockBuilder<'chain> for ChainBlockBuilder<'chain> {
         self.block.seal = post_log;
         Ok(self.block)
     }
+}
+
+#[test]
+fn basic_build_and_import() -> Result<(), ChainError> {
+    // Define a genesis block.
+    let genesis_block = Block {
+        seal: Seal::InvalidSeal, // Genesis block does not need to be verified.
+        id: BlockId {
+            fork: 0,
+            number: 0,
+        },
+        parent_id: None,
+        number: 0,
+        extrinsics: Vec::new(),
+    };
+
+    // Define a genesis state.
+    let genesis_state = vec![
+        (100, Some(100)),
+        (200, Some(200)),
+    ];
+
+    // Create a new chain.
+    let mut chain = Chain {
+        data: MemoryTransactional::new(
+            ChainData {
+                fork_tree: MemoryForkTree::new(),
+                state: MemoryFlatState::new(),
+            },
+        )
+    };
+
+    // Import the genesis into fork tree.
+    chain.data.apply(|data| {
+        data.fork_tree.insert(genesis_block.clone())?;
+        
+        // It's possible to handle extrinsics in a genesis, but it's a rare thing,
+        // and here we just assert that it's empty.
+        assert!(genesis_block.extrinsics.is_empty());
+
+        data.state.apply(genesis_state.clone().into_iter(), genesis_block.id(), &data.fork_tree)?;
+
+        Ok::<_, ChainError>(())
+    })?;
+
+    Ok(())
 }
