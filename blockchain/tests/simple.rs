@@ -263,5 +263,18 @@ fn basic_build_and_import() -> Result<(), ChainError> {
         Some(200),
     );
 
+    // Create a fork.
+    let mut block2 = block.clone();
+    block2.id = BlockId {
+        fork: 1,
+        number: block2.id.number,
+    };
+    block2.extrinsics[0] = Extrinsic::Set(100, 300);
+    chain.import(block2.clone())?;
+    assert_eq!(
+        chain.data.state.get(&100, &block2.id(), &chain.data.fork_tree)?,
+        Some(300),
+    );
+
     Ok(())
 }
