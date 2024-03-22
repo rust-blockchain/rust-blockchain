@@ -1,5 +1,5 @@
 use futures::stream::Stream;
-use std::pin::Pin;
+use std::future::Future;
 
 pub trait NetworkService {
     type PeerId;
@@ -16,20 +16,28 @@ pub struct NetworkEvent<PeerId, Message> {
 pub trait NetworkMessageService<Message>: NetworkService {
     type ProtocolName;
 
-    async fn broadcast(
+    fn broadcast(
         &self,
         name: Self::ProtocolName,
         message: Message,
-    ) -> Result<(), Self::Error>;
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
-    async fn notify(&self, peer: Self::PeerId, message: Message) -> Result<(), Self::Error>;
+    fn notify(
+        &self,
+        peer: Self::PeerId,
+        message: Message,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
     fn listen(
         &self,
         name: Self::ProtocolName,
-    ) -> Pin<Box<dyn Stream<Item = Result<NetworkEvent<Self::PeerId, Message>, Self::Error>> + Send>>;
+    ) -> impl Stream<Item = Result<NetworkEvent<Self::PeerId, Message>, Self::Error>> + Send;
 }
 
 pub trait NetworkRequestService<Request, Response>: NetworkService {
-    async fn request(&self, peer: Self::PeerId, request: Request) -> Result<Response, Self::Error>;
+    fn request(
+        &self,
+        peer: Self::PeerId,
+        request: Request,
+    ) -> impl Future<Output = Result<Response, Self::Error>> + Send;
 }
