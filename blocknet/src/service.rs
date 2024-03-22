@@ -3,7 +3,6 @@ use std::pin::Pin;
 
 pub trait NetworkService {
     type PeerId;
-    type ProtocolName;
     type Error;
 }
 
@@ -12,35 +11,23 @@ pub struct NetworkEvent<PeerId, Message> {
     pub message: Message,
 }
 
-pub trait NetworkMessageService: NetworkService {
-    type Message;
+pub trait NetworkMessageService<Message>: NetworkService {
+    type ProtocolName;
 
     async fn broadcast(
         &self,
         name: Self::ProtocolName,
-        message: Self::Message,
+        message: Message,
     ) -> Result<(), Self::Error>;
 
-    async fn notify(&self, peer: Self::PeerId, message: Self::Message) -> Result<(), Self::Error>;
+    async fn notify(&self, peer: Self::PeerId, message: Message) -> Result<(), Self::Error>;
 
     fn listen(
         &self,
         name: Self::ProtocolName,
-    ) -> Pin<
-        Box<
-            dyn Stream<Item = Result<NetworkEvent<Self::PeerId, Self::Message>, Self::Error>>
-                + Send,
-        >,
-    >;
+    ) -> Pin<Box<dyn Stream<Item = Result<NetworkEvent<Self::PeerId, Message>, Self::Error>> + Send>>;
 }
 
-pub trait NetworkRequestService: NetworkService {
-    type Request;
-    type Response;
-
-    async fn request(
-        &self,
-        peer: Self::PeerId,
-        request: Self::Request,
-    ) -> Result<Self::Response, Self::Error>;
+pub trait NetworkRequestService<Request, Response>: NetworkService {
+    async fn request(&self, peer: Self::PeerId, request: Request) -> Result<Response, Self::Error>;
 }
