@@ -207,40 +207,36 @@ fn basic_build_and_import() -> Result<(), ChainError> {
     // Define a genesis block.
     let genesis_block = Block {
         seal: Seal::InvalidSeal, // Genesis block does not need to be verified.
-        id: BlockId {
-            fork: 0,
-            number: 0,
-        },
+        id: BlockId { fork: 0, number: 0 },
         parent_id: None,
         number: 0,
         extrinsics: Vec::new(),
     };
 
     // Define a genesis state.
-    let genesis_state = vec![
-        (100, Some(100)),
-        (200, Some(200)),
-    ];
+    let genesis_state = vec![(100, Some(100)), (200, Some(200))];
 
     // Create a new chain.
     let mut chain = Chain {
-        data: MemoryTransactional::new(
-            ChainData {
-                fork_tree: MemoryForkTree::new(),
-                state: MemoryFlatState::new(),
-            },
-        )
+        data: MemoryTransactional::new(ChainData {
+            fork_tree: MemoryForkTree::new(),
+            state: MemoryFlatState::new(),
+        }),
     };
 
     // Import the genesis into fork tree.
     chain.data.apply(|data| {
         data.fork_tree.insert(genesis_block.clone())?;
-        
+
         // It's possible to handle extrinsics in a genesis, but it's a rare thing,
         // and here we just assert that it's empty.
         assert!(genesis_block.extrinsics.is_empty());
 
-        data.state.apply(genesis_state.clone().into_iter(), genesis_block.id(), &data.fork_tree)?;
+        data.state.apply(
+            genesis_state.clone().into_iter(),
+            genesis_block.id(),
+            &data.fork_tree,
+        )?;
 
         Ok::<_, ChainError>(())
     })?;
@@ -255,11 +251,17 @@ fn basic_build_and_import() -> Result<(), ChainError> {
 
     // Check that the state is actually set.
     assert_eq!(
-        chain.data.state.get(&100, &genesis_block.id(), &chain.data.fork_tree)?,
+        chain
+            .data
+            .state
+            .get(&100, &genesis_block.id(), &chain.data.fork_tree)?,
         Some(100),
     );
     assert_eq!(
-        chain.data.state.get(&100, &block.id(), &chain.data.fork_tree)?,
+        chain
+            .data
+            .state
+            .get(&100, &block.id(), &chain.data.fork_tree)?,
         Some(200),
     );
 
@@ -272,7 +274,10 @@ fn basic_build_and_import() -> Result<(), ChainError> {
     block2.extrinsics[0] = Extrinsic::Set(100, 300);
     chain.import(block2.clone())?;
     assert_eq!(
-        chain.data.state.get(&100, &block2.id(), &chain.data.fork_tree)?,
+        chain
+            .data
+            .state
+            .get(&100, &block2.id(), &chain.data.fork_tree)?,
         Some(300),
     );
 
