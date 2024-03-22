@@ -9,3 +9,4 @@ edition.workspace = true
 
 [dependencies]
 futures = "0.3"
+libp2p = { version = "0.53", features = ["full"] }

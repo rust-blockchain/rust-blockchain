@@ -4,6 +4,8 @@ use std::pin::Pin;
 pub trait NetworkService {
     type PeerId;
     type Error;
+
+    fn connected_peers(&self) -> impl IntoIterator<Item = Self::PeerId>;
 }
 
 pub struct NetworkEvent<PeerId, Message> {
