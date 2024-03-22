@@ -1,5 +1,12 @@
+[workspace.package]
+authors = ["Wei Tang <wei@pacna.org>"]
+license = "Apache-2.0"
+edition = "2021"
+repository = "https://github.com/rust-blockchain/blockchain"
+
 [workspace]
 members = [
 	"blockchain",
+	"blocknet",
 	"tinyjam",
 ]
