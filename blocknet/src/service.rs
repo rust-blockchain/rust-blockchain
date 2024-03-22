@@ -1,7 +1,7 @@
 use futures::stream::Stream;
 use std::future::Future;
 
-pub trait NetworkService {
+pub trait NetworkService: Send {
     type PeerId;
     type Error;
 
