@@ -3,5 +3,5 @@ name = "tinyjam"
 version = "0.1.0"
 authors = ["Wei Tang <hi@that.world>"]
 description = "A tiny amount of jam."
-license = "GPL-3.0"
+license = "Apache-2.0"
 edition = "2018"
