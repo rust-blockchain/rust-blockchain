@@ -3,13 +3,16 @@ use std::future::Future;
 
 pub trait NetworkService: Send {
     type PeerId;
+    type PeerInfo;
     type Error;
 
-    fn connected_peers(&self) -> impl IntoIterator<Item = Self::PeerId>;
+    fn local_info(&self) -> Self::PeerInfo;
+    fn set_local_info(&self, info: Self::PeerInfo) -> Result<(), Self::Error>;
+    fn peers(&self) -> impl IntoIterator<Item = (Self::PeerId, Self::PeerInfo)>;
 }
 
 pub struct NetworkEvent<PeerId, Message> {
-    pub originator: PeerId,
+    pub origin: PeerId,
     pub message: Message,
 }
 
