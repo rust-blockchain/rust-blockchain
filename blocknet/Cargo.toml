@@ -8,6 +8,17 @@ license.workspace = true
 edition.workspace = true
 
 [dependencies]
+asynchronous-codec = "0.7.0"
 futures = "0.3"
+futures-timer = "3.0.3"
+futures-bounded = "0.2.3"
 serde = "1.0"
 libp2p = { version = "0.53", features = ["full"] }
+quick-protobuf-codec = "0.3.1"
+quick-protobuf = "0.8"
+tracing = "0.1.37"
+thiserror = "1.0"
+void = "1.0"
+either = "1.11.0"
+smallvec = "1.13.2"
+lru = "0.12.1"

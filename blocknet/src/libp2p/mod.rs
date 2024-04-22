@@ -1,10 +1,12 @@
+mod peer_info;
+
 use crate::{
     NetworkMessageService as NetworkMessageServiceT,
     NetworkRequestService as NetworkRequestServiceT, NetworkService as NetworkServiceT,
 };
 use futures::channel::mpsc;
 use libp2p::{
-    gossipsub, identify, kad, mdns, request_response,
+    gossipsub, kad, mdns, request_response,
     swarm::{NetworkBehaviour, Swarm},
 };
 use serde::{de::DeserializeOwned, Serialize};
@@ -25,7 +27,7 @@ where
 {
     gossipsub: gossipsub::Behaviour,
     kademlia: kad::Behaviour<kad::store::MemoryStore>,
-    identify: identify::Behaviour,
+    peer_info: peer_info::Behaviour,
     mdns: mdns::tokio::Behaviour,
     request_response: request_response::json::Behaviour<Req, Res>,
 }
