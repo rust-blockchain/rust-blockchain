@@ -4,9 +4,10 @@ use crate::{
 };
 use futures::channel::mpsc;
 use libp2p::{
-    gossipsub, identify, kad, mdns,
+    gossipsub, identify, kad, mdns, request_response,
     swarm::{NetworkBehaviour, Swarm},
 };
+use serde::{de::DeserializeOwned, Serialize};
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -17,11 +18,16 @@ pub type PeerId = libp2p::PeerId;
 pub type ProtocolName = Cow<'static, str>;
 
 #[derive(NetworkBehaviour)]
-struct Behaviour {
+struct Behaviour<Req, Res>
+where
+    Req: Serialize + DeserializeOwned + Send + 'static,
+    Res: Serialize + DeserializeOwned + Send + 'static,
+{
     gossipsub: gossipsub::Behaviour,
     kademlia: kad::Behaviour<kad::store::MemoryStore>,
     identify: identify::Behaviour,
     mdns: mdns::tokio::Behaviour,
+    request_response: request_response::json::Behaviour<Req, Res>,
 }
 
 enum ActionItem<Msg, Req, Res> {
@@ -43,8 +49,12 @@ enum ActionItem<Msg, Req, Res> {
 
 pub enum Error {}
 
-pub struct NetworkWorker<Msg, Req, Res> {
-    swarm: Swarm<Behaviour>,
+pub struct NetworkWorker<Msg, Req, Res>
+where
+    Req: Serialize + DeserializeOwned + Send + 'static,
+    Res: Serialize + DeserializeOwned + Send + 'static,
+{
+    swarm: Swarm<Behaviour<Req, Res>>,
     queue: mpsc::Receiver<ActionItem<Msg, Req, Res>>,
 }
 
