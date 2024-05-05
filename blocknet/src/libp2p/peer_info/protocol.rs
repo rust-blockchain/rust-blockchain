@@ -18,9 +18,6 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use super::proto;
-use asynchronous_codec::{FramedRead, FramedWrite};
-use futures::prelude::*;
 use libp2p::core::{multiaddr, Multiaddr};
 use libp2p::identity;
 use libp2p::identity::PublicKey;
@@ -89,78 +86,6 @@ pub struct PushInfo {
     pub observed_addr: Option<Multiaddr>,
 }
 
-pub(crate) async fn send_identify<T>(io: T, info: Info) -> Result<Info, UpgradeError>
-where
-    T: AsyncWrite + Unpin,
-{
-    tracing::trace!("Sending: {:?}", info);
-
-    let listen_addrs = info.listen_addrs.iter().map(|addr| addr.to_vec()).collect();
-
-    let pubkey_bytes = info.public_key.encode_protobuf();
-
-    let message = proto::Identify {
-        agentVersion: Some(info.agent_version.clone()),
-        protocolVersion: Some(info.protocol_version.clone()),
-        publicKey: Some(pubkey_bytes),
-        listenAddrs: listen_addrs,
-        observedAddr: Some(info.observed_addr.to_vec()),
-        protocols: info.protocols.iter().map(|p| p.to_string()).collect(),
-    };
-
-    let mut framed_io = FramedWrite::new(
-        io,
-        quick_protobuf_codec::Codec::<proto::Identify>::new(MAX_MESSAGE_SIZE_BYTES),
-    );
-
-    framed_io.send(message).await?;
-    framed_io.close().await?;
-
-    Ok(info)
-}
-
-pub(crate) async fn recv_push<T>(socket: T) -> Result<PushInfo, UpgradeError>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    let info = recv(socket).await?.try_into()?;
-
-    tracing::trace!(?info, "Received");
-
-    Ok(info)
-}
-
-pub(crate) async fn recv_identify<T>(socket: T) -> Result<Info, UpgradeError>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    let info = recv(socket).await?.try_into()?;
-
-    tracing::trace!(?info, "Received");
-
-    Ok(info)
-}
-
-async fn recv<T>(socket: T) -> Result<proto::Identify, UpgradeError>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    // Even though we won't write to the stream anymore we don't close it here.
-    // The reason for this is that the `close` call on some transport's require the
-    // remote's ACK, but it could be that the remote already dropped the stream
-    // after finishing their write.
-
-    let info = FramedRead::new(
-        socket,
-        quick_protobuf_codec::Codec::<proto::Identify>::new(MAX_MESSAGE_SIZE_BYTES),
-    )
-    .next()
-    .await
-    .ok_or(UpgradeError::StreamClosed)??;
-
-    Ok(info)
-}
-
 fn parse_listen_addrs(listen_addrs: Vec<Vec<u8>>) -> Vec<Multiaddr> {
     listen_addrs
         .into_iter()
@@ -207,48 +132,6 @@ fn parse_observed_addr(observed_addr: Option<Vec<u8>>) -> Option<Multiaddr> {
     })
 }
 
-impl TryFrom<proto::Identify> for Info {
-    type Error = UpgradeError;
-
-    fn try_from(msg: proto::Identify) -> Result<Self, Self::Error> {
-        let public_key = {
-            match parse_public_key(msg.publicKey) {
-                Some(key) => key,
-                // This will always produce a DecodingError if the public key is missing.
-                None => PublicKey::try_decode_protobuf(Default::default())?,
-            }
-        };
-
-        let info = Info {
-            public_key,
-            protocol_version: msg.protocolVersion.unwrap_or_default(),
-            agent_version: msg.agentVersion.unwrap_or_default(),
-            listen_addrs: parse_listen_addrs(msg.listenAddrs),
-            protocols: parse_protocols(msg.protocols),
-            observed_addr: parse_observed_addr(msg.observedAddr).unwrap_or(Multiaddr::empty()),
-        };
-
-        Ok(info)
-    }
-}
-
-impl TryFrom<proto::Identify> for PushInfo {
-    type Error = UpgradeError;
-
-    fn try_from(msg: proto::Identify) -> Result<Self, Self::Error> {
-        let info = PushInfo {
-            public_key: parse_public_key(msg.publicKey),
-            protocol_version: msg.protocolVersion,
-            agent_version: msg.agentVersion,
-            listen_addrs: parse_listen_addrs(msg.listenAddrs),
-            protocols: parse_protocols(msg.protocols),
-            observed_addr: parse_observed_addr(msg.observedAddr),
-        };
-
-        Ok(info)
-    }
-}
-
 #[derive(Debug, Error)]
 pub enum UpgradeError {
     #[error(transparent)]
@@ -261,39 +144,4 @@ pub enum UpgradeError {
     Multiaddr(#[from] multiaddr::Error),
     #[error("Failed decoding public key")]
     PublicKey(#[from] identity::DecodingError),
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use libp2p::identity;
-
-    #[test]
-    fn skip_invalid_multiaddr() {
-        let valid_multiaddr: Multiaddr = "/ip6/2001:db8::/tcp/1234".parse().unwrap();
-        let valid_multiaddr_bytes = valid_multiaddr.to_vec();
-
-        let invalid_multiaddr = {
-            let a = vec![255; 8];
-            assert!(Multiaddr::try_from(a.clone()).is_err());
-            a
-        };
-
-        let payload = proto::Identify {
-            agentVersion: None,
-            listenAddrs: vec![valid_multiaddr_bytes, invalid_multiaddr],
-            observedAddr: None,
-            protocolVersion: None,
-            protocols: vec![],
-            publicKey: Some(
-                identity::Keypair::generate_ed25519()
-                    .public()
-                    .encode_protobuf(),
-            ),
-        };
-
-        let info = PushInfo::try_from(payload).expect("not to fail");
-
-        assert_eq!(info.listen_addrs, vec![valid_multiaddr])
-    }
 }

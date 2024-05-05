@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use super::handler::{self, Handler, InEvent};
-use super::protocol::{Info, UpgradeError};
+use super::{Codec, Info, UpgradeError};
 use libp2p::core::{multiaddr, ConnectedPoint, Endpoint, Multiaddr};
 use libp2p::identity::PeerId;
 use libp2p::identity::PublicKey;
@@ -45,7 +45,7 @@ use std::{
 ///
 /// All external addresses of the local node supposedly observed by remotes
 /// are reported via [`ToSwarm::NewExternalAddrCandidate`].
-pub struct Behaviour {
+pub struct Behaviour<TCodec: Codec> {
     config: Config,
     /// For each peer we're connected to, the observed address to send back to it.
     connected: HashMap<PeerId, HashMap<ConnectionId, Multiaddr>>,
@@ -60,6 +60,7 @@ pub struct Behaviour {
 
     listen_addresses: ListenAddresses,
     external_addresses: ExternalAddresses,
+    codec: TCodec,
 }
 
 /// Configuration for the [`identify::Behaviour`](Behaviour).
@@ -142,7 +143,7 @@ impl Config {
     }
 }
 
-impl Behaviour {
+impl<TCodec: Codec + Default> Behaviour<TCodec> {
     /// Creates a new identify [`Behaviour`].
     pub fn new(config: Config) -> Self {
         let discovered_peers = match NonZeroUsize::new(config.cache_size) {
@@ -158,9 +159,12 @@ impl Behaviour {
             discovered_peers,
             listen_addresses: Default::default(),
             external_addresses: Default::default(),
+            codec: Default::default(),
         }
     }
+}
 
+impl<TCodec: Codec> Behaviour<TCodec> {
     /// Initiates an active push of the local peer information to the given peers.
     pub fn push<I>(&mut self, peers: I)
     where
@@ -216,8 +220,8 @@ impl Behaviour {
     }
 }
 
-impl NetworkBehaviour for Behaviour {
-    type ConnectionHandler = Handler;
+impl<TCodec: Codec + Clone> NetworkBehaviour for Behaviour<TCodec> {
+    type ConnectionHandler = Handler<TCodec>;
     type ToSwarm = Event;
 
     fn handle_established_inbound_connection(
@@ -235,6 +239,7 @@ impl NetworkBehaviour for Behaviour {
             self.config.agent_version.clone(),
             remote_addr.clone(),
             self.all_addresses(),
+            self.codec.clone(),
         ))
     }
 
@@ -253,6 +258,7 @@ impl NetworkBehaviour for Behaviour {
             self.config.agent_version.clone(),
             addr.clone(), // TODO: This is weird? That is the public address we dialed, shouldn't need to tell the other party?
             self.all_addresses(),
+            self.codec.clone(),
         ))
     }
 

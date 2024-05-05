@@ -18,8 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use super::protocol::{Info, PushInfo, UpgradeError};
-use super::{protocol, PROTOCOL_NAME, PUSH_PROTOCOL_NAME};
+use super::{protocol, Codec, Info, PushInfo, UpgradeError, PROTOCOL_NAME, PUSH_PROTOCOL_NAME};
 use either::Either;
 use futures::prelude::*;
 use futures_bounded::Timeout;
@@ -49,7 +48,7 @@ const MAX_CONCURRENT_STREAMS_PER_CONNECTION: usize = 10;
 /// Outbound requests are sent periodically. The handler performs expects
 /// at least one identification request to be answered by the remote before
 /// permitting the underlying connection to be closed.
-pub struct Handler {
+pub struct Handler<TCodec: Codec> {
     remote_peer_id: PeerId,
     /// Pending events to yield.
     events: SmallVec<
@@ -91,6 +90,7 @@ pub struct Handler {
     local_supported_protocols: SupportedProtocols,
     remote_supported_protocols: HashSet<StreamProtocol>,
     external_addresses: HashSet<Multiaddr>,
+    codec: TCodec,
 }
 
 /// An event from `Behaviour` with the information requested by the `Handler`.
@@ -114,7 +114,7 @@ pub enum Event {
     IdentificationError(StreamUpgradeError<UpgradeError>),
 }
 
-impl Handler {
+impl<TCodec: Codec> Handler<TCodec> {
     /// Creates a new `Handler`.
     pub fn new(
         interval: Duration,
@@ -124,6 +124,7 @@ impl Handler {
         agent_version: String,
         observed_addr: Multiaddr,
         external_addresses: HashSet<Multiaddr>,
+        codec: TCodec,
     ) -> Self {
         Self {
             remote_peer_id,
@@ -143,6 +144,7 @@ impl Handler {
             remote_supported_protocols: HashSet::default(),
             remote_info: Default::default(),
             external_addresses,
+            codec,
         }
     }
 
@@ -162,7 +164,9 @@ impl Handler {
                 if self
                     .active_streams
                     .try_push(
-                        protocol::send_identify(stream, info).map_ok(|_| Success::SentIdentify),
+                        self.codec
+                            .write_info(&mut stream, info)
+                            .map_ok(|_| Success::SentIdentify),
                     )
                     .is_err()
                 {
@@ -174,7 +178,11 @@ impl Handler {
             future::Either::Right(stream) => {
                 if self
                     .active_streams
-                    .try_push(protocol::recv_push(stream).map_ok(Success::ReceivedIdentifyPush))
+                    .try_push(
+                        self.codec
+                            .read_push_info(&mut stream)
+                            .map_ok(Success::ReceivedIndentifyPush),
+                    )
                     .is_err()
                 {
                     tracing::warn!(
@@ -198,7 +206,11 @@ impl Handler {
             future::Either::Left(stream) => {
                 if self
                     .active_streams
-                    .try_push(protocol::recv_identify(stream).map_ok(Success::ReceivedIdentify))
+                    .try_push(
+                        self.codec
+                            .read_info(&mut stream)
+                            .map_ok(Success::ReceivedIdentify),
+                    )
                     .is_err()
                 {
                     tracing::warn!("Dropping outbound identify stream because we are at capacity");
@@ -210,7 +222,9 @@ impl Handler {
                 if self
                     .active_streams
                     .try_push(
-                        protocol::send_identify(stream, info).map_ok(Success::SentIdentifyPush),
+                        self.codec
+                            .write_push_info(&mut stream, info)
+                            .map_ok(Success::SendIdentifyPush),
                     )
                     .is_err()
                 {
@@ -278,7 +292,7 @@ impl Handler {
     }
 }
 
-impl ConnectionHandler for Handler {
+impl<TCodec: Codec> ConnectionHandler for Handler<TCodec> {
     type FromBehaviour = InEvent;
     type ToBehaviour = Event;
     type InboundProtocol =

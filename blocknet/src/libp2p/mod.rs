@@ -27,7 +27,7 @@ where
 {
     gossipsub: gossipsub::Behaviour,
     kademlia: kad::Behaviour<kad::store::MemoryStore>,
-    peer_info: peer_info::Behaviour,
+    // peer_info: peer_info::Behaviour,
     mdns: mdns::tokio::Behaviour,
     request_response: request_response::json::Behaviour<Req, Res>,
 }
