@@ -62,11 +62,11 @@ impl Info {
         if let Some(agent_version) = info.agent_version {
             self.agent_version = agent_version;
         }
-        if !info.listen_addrs.is_empty() {
-            self.listen_addrs = info.listen_addrs;
+        if let Some(listen_addrs) = info.listen_addrs {
+            self.listen_addrs = listen_addrs;
         }
-        if !info.protocols.is_empty() {
-            self.protocols = info.protocols;
+        if let Some(protocols) = info.protocols {
+            self.protocols = protocols;
         }
         if let Some(observed_addr) = info.observed_addr {
             self.observed_addr = observed_addr;
@@ -81,9 +81,22 @@ pub struct PushInfo {
     pub public_key: Option<PublicKey>,
     pub protocol_version: Option<String>,
     pub agent_version: Option<String>,
-    pub listen_addrs: Vec<Multiaddr>,
-    pub protocols: Vec<StreamProtocol>,
+    pub listen_addrs: Option<Vec<Multiaddr>>,
+    pub protocols: Option<Vec<StreamProtocol>>,
     pub observed_addr: Option<Multiaddr>,
+}
+
+impl From<Info> for PushInfo {
+    fn from(info: Info) -> PushInfo {
+        PushInfo {
+            public_key: Some(info.public_key),
+            protocol_version: Some(info.protocol_version),
+            agent_version: Some(info.agent_version),
+            listen_addrs: Some(info.listen_addrs),
+            protocols: Some(info.protocols),
+            observed_addr: Some(info.observed_addr),
+        }
+    }
 }
 
 fn parse_listen_addrs(listen_addrs: Vec<Vec<u8>>) -> Vec<Multiaddr> {

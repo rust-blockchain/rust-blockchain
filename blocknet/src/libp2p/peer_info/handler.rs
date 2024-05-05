@@ -37,7 +37,7 @@ use libp2p::swarm::{
 };
 use smallvec::SmallVec;
 use std::collections::HashSet;
-use std::{task::Context, task::Poll, time::Duration};
+use std::{marker::PhantomData, task::Context, task::Poll, time::Duration};
 use tracing::Level;
 
 const STREAM_TIMEOUT: Duration = Duration::from_secs(60);
@@ -90,7 +90,8 @@ pub struct Handler<TCodec: Codec> {
     local_supported_protocols: SupportedProtocols,
     remote_supported_protocols: HashSet<StreamProtocol>,
     external_addresses: HashSet<Multiaddr>,
-    codec: TCodec,
+
+    _marker: PhantomData<TCodec>,
 }
 
 /// An event from `Behaviour` with the information requested by the `Handler`.
@@ -109,7 +110,7 @@ pub enum Event {
     /// We replied to an identification request from the remote.
     Identification,
     /// We actively pushed our identification information to the remote.
-    IdentificationPushed(Info),
+    IdentificationPushed(PushInfo),
     /// Failed to identify the remote, or to reply to an identification request.
     IdentificationError(StreamUpgradeError<UpgradeError>),
 }
@@ -124,7 +125,6 @@ impl<TCodec: Codec> Handler<TCodec> {
         agent_version: String,
         observed_addr: Multiaddr,
         external_addresses: HashSet<Multiaddr>,
-        codec: TCodec,
     ) -> Self {
         Self {
             remote_peer_id,
@@ -144,7 +144,7 @@ impl<TCodec: Codec> Handler<TCodec> {
             remote_supported_protocols: HashSet::default(),
             remote_info: Default::default(),
             external_addresses,
-            codec,
+            _marker: PhantomData,
         }
     }
 
@@ -163,11 +163,7 @@ impl<TCodec: Codec> Handler<TCodec> {
 
                 if self
                     .active_streams
-                    .try_push(
-                        self.codec
-                            .write_info(&mut stream, info)
-                            .map_ok(|_| Success::SentIdentify),
-                    )
+                    .try_push(TCodec::write_info(stream, info).map_ok(|_| Success::SentIdentify))
                     .is_err()
                 {
                     tracing::warn!("Dropping inbound stream because we are at capacity");
@@ -178,11 +174,7 @@ impl<TCodec: Codec> Handler<TCodec> {
             future::Either::Right(stream) => {
                 if self
                     .active_streams
-                    .try_push(
-                        self.codec
-                            .read_push_info(&mut stream)
-                            .map_ok(Success::ReceivedIndentifyPush),
-                    )
+                    .try_push(TCodec::read_push_info(stream).map_ok(Success::ReceivedIdentifyPush))
                     .is_err()
                 {
                     tracing::warn!(
@@ -206,25 +198,20 @@ impl<TCodec: Codec> Handler<TCodec> {
             future::Either::Left(stream) => {
                 if self
                     .active_streams
-                    .try_push(
-                        self.codec
-                            .read_info(&mut stream)
-                            .map_ok(Success::ReceivedIdentify),
-                    )
+                    .try_push(TCodec::read_info(stream).map_ok(Success::ReceivedIdentify))
                     .is_err()
                 {
                     tracing::warn!("Dropping outbound identify stream because we are at capacity");
                 }
             }
-            future::Either::Right(stream) => {
-                let info = self.build_info();
+            future::Either::Right(mut stream) => {
+                let info: PushInfo = self.build_info().into();
 
                 if self
                     .active_streams
                     .try_push(
-                        self.codec
-                            .write_push_info(&mut stream, info)
-                            .map_ok(Success::SendIdentifyPush),
+                        TCodec::write_push_info(stream, info.clone())
+                            .map_ok(|()| Success::SentIdentifyPush(info)),
                     )
                     .is_err()
                 {
@@ -451,6 +438,6 @@ impl<TCodec: Codec> ConnectionHandler for Handler<TCodec> {
 enum Success {
     SentIdentify,
     ReceivedIdentify(Info),
-    SentIdentifyPush(Info),
+    SentIdentifyPush(PushInfo),
     ReceivedIdentifyPush(PushInfo),
 }

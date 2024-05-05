@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use super::handler::{self, Handler, InEvent};
-use super::{Codec, Info, UpgradeError};
+use super::{Codec, Info, PushInfo, UpgradeError};
 use libp2p::core::{multiaddr, ConnectedPoint, Endpoint, Multiaddr};
 use libp2p::identity::PeerId;
 use libp2p::identity::PublicKey;
@@ -35,6 +35,7 @@ use std::num::NonZeroUsize;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     iter::FromIterator,
+    marker::PhantomData,
     task::Context,
     task::Poll,
     time::Duration,
@@ -60,7 +61,8 @@ pub struct Behaviour<TCodec: Codec> {
 
     listen_addresses: ListenAddresses,
     external_addresses: ExternalAddresses,
-    codec: TCodec,
+
+    _marker: PhantomData<TCodec>,
 }
 
 /// Configuration for the [`identify::Behaviour`](Behaviour).
@@ -143,7 +145,7 @@ impl Config {
     }
 }
 
-impl<TCodec: Codec + Default> Behaviour<TCodec> {
+impl<TCodec: Codec> Behaviour<TCodec> {
     /// Creates a new identify [`Behaviour`].
     pub fn new(config: Config) -> Self {
         let discovered_peers = match NonZeroUsize::new(config.cache_size) {
@@ -159,12 +161,10 @@ impl<TCodec: Codec + Default> Behaviour<TCodec> {
             discovered_peers,
             listen_addresses: Default::default(),
             external_addresses: Default::default(),
-            codec: Default::default(),
+            _marker: PhantomData,
         }
     }
-}
 
-impl<TCodec: Codec> Behaviour<TCodec> {
     /// Initiates an active push of the local peer information to the given peers.
     pub fn push<I>(&mut self, peers: I)
     where
@@ -220,7 +220,7 @@ impl<TCodec: Codec> Behaviour<TCodec> {
     }
 }
 
-impl<TCodec: Codec + Clone> NetworkBehaviour for Behaviour<TCodec> {
+impl<TCodec: Codec> NetworkBehaviour for Behaviour<TCodec> {
     type ConnectionHandler = Handler<TCodec>;
     type ToSwarm = Event;
 
@@ -239,7 +239,6 @@ impl<TCodec: Codec + Clone> NetworkBehaviour for Behaviour<TCodec> {
             self.config.agent_version.clone(),
             remote_addr.clone(),
             self.all_addresses(),
-            self.codec.clone(),
         ))
     }
 
@@ -258,7 +257,6 @@ impl<TCodec: Codec + Clone> NetworkBehaviour for Behaviour<TCodec> {
             self.config.agent_version.clone(),
             addr.clone(), // TODO: This is weird? That is the public address we dialed, shouldn't need to tell the other party?
             self.all_addresses(),
-            self.codec.clone(),
         ))
     }
 
@@ -430,7 +428,7 @@ pub enum Event {
         peer_id: PeerId,
         /// The full Info struct we pushed to the remote peer. Clients must
         /// do some diff'ing to know what has changed since the last push.
-        info: Info,
+        info: PushInfo,
     },
     /// Error while attempting to identify the remote.
     Error {
