@@ -1,4 +1,4 @@
-mod peer_info;
+pub mod peer_info;
 
 use crate::{
     NetworkMessageService as NetworkMessageServiceT,

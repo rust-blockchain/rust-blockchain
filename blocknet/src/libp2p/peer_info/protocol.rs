@@ -147,8 +147,8 @@ fn parse_observed_addr(observed_addr: Option<Vec<u8>>) -> Option<Multiaddr> {
 
 #[derive(Debug, Error)]
 pub enum UpgradeError {
-    #[error(transparent)]
-    Codec(#[from] quick_protobuf_codec::Error),
+    #[error("Codec error")]
+    Codec(String),
     #[error("I/O interaction failed")]
     Io(#[from] io::Error),
     #[error("Stream closed")]

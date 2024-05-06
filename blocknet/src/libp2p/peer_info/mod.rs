@@ -48,5 +48,5 @@ pub use self::protocol::{Info, PushInfo, UpgradeError, PROTOCOL_NAME, PUSH_PROTO
 mod behaviour;
 mod codec;
 mod handler;
-// mod proto;
+pub mod json;
 mod protocol;
