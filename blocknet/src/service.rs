@@ -17,13 +17,7 @@ pub struct NetworkEvent<PeerId, Message> {
 }
 
 pub trait NetworkMessageService<Message>: NetworkService {
-    type ProtocolName;
-
-    fn broadcast(
-        &self,
-        name: Self::ProtocolName,
-        message: Message,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+    fn broadcast(&self, message: Message) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
     fn notify(
         &self,
@@ -33,7 +27,6 @@ pub trait NetworkMessageService<Message>: NetworkService {
 
     fn listen(
         &self,
-        name: Self::ProtocolName,
     ) -> impl Stream<Item = Result<NetworkEvent<Self::PeerId, Message>, Self::Error>> + Send;
 }
 
