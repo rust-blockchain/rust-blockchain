@@ -19,22 +19,18 @@
 // DEALINGS IN THE SOFTWARE.
 
 use super::handler::{self, Handler, InEvent};
-use super::{Codec, Info, PushInfo, UpgradeError};
-use libp2p::core::{multiaddr, ConnectedPoint, Endpoint, Multiaddr};
+use super::{Codec, Info, UpgradeError};
+use libp2p::core::{ConnectedPoint, Endpoint, Multiaddr};
 use libp2p::identity::PeerId;
 use libp2p::identity::PublicKey;
-use libp2p::swarm::behaviour::{ConnectionClosed, ConnectionEstablished, DialFailure, FromSwarm};
+use libp2p::swarm::behaviour::{ConnectionClosed, ConnectionEstablished, FromSwarm};
 use libp2p::swarm::{
-    ConnectionDenied, DialError, ExternalAddresses, ListenAddresses, NetworkBehaviour,
-    NotifyHandler, StreamUpgradeError, THandlerInEvent, ToSwarm,
+    ConnectionDenied, ExternalAddresses, ListenAddresses, NetworkBehaviour, NotifyHandler,
+    StreamProtocol, StreamUpgradeError, THandlerInEvent, ToSwarm,
 };
 use libp2p::swarm::{ConnectionId, THandler, THandlerOutEvent};
-use lru::LruCache;
-use std::collections::hash_map::Entry;
-use std::num::NonZeroUsize;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    iter::FromIterator,
     marker::PhantomData,
     task::Context,
     task::Poll,
@@ -46,7 +42,7 @@ use std::{
 ///
 /// All external addresses of the local node supposedly observed by remotes
 /// are reported via [`ToSwarm::NewExternalAddrCandidate`].
-pub struct Behaviour<TCodec: Codec> {
+pub struct Behaviour<TInfo: Info, TCodec: Codec<TInfo>> {
     config: Config,
     /// For each peer we're connected to, the observed address to send back to it.
     connected: HashMap<PeerId, HashMap<ConnectionId, Multiaddr>>,
@@ -55,14 +51,14 @@ pub struct Behaviour<TCodec: Codec> {
     our_observed_addresses: HashMap<ConnectionId, Multiaddr>,
 
     /// Pending events to be emitted when polled.
-    events: VecDeque<ToSwarm<Event, InEvent>>,
-    /// The addresses of all peers that we have discovered.
-    discovered_peers: PeerCache,
+    events: VecDeque<ToSwarm<Event<TInfo>, InEvent>>,
 
     listen_addresses: ListenAddresses,
     external_addresses: ExternalAddresses,
 
-    _marker: PhantomData<TCodec>,
+    local_info: TInfo,
+
+    _marker: PhantomData<(TInfo, TCodec)>,
 }
 
 /// Configuration for the [`identify::Behaviour`](Behaviour).
@@ -101,12 +97,23 @@ pub struct Config {
     ///
     /// Disabled by default.
     pub cache_size: usize,
+
+    /// Protocol name.
+    pub protocol_name: StreamProtocol,
+
+    /// Push protocol name.
+    pub push_protocol_name: StreamProtocol,
 }
 
 impl Config {
     /// Creates a new configuration for the identify [`Behaviour`] that
     /// advertises the given protocol version and public key.
-    pub fn new(protocol_version: String, local_public_key: PublicKey) -> Self {
+    pub fn new(
+        protocol_version: String,
+        local_public_key: PublicKey,
+        protocol_name: StreamProtocol,
+        push_protocol_name: StreamProtocol,
+    ) -> Self {
         Self {
             protocol_version,
             agent_version: format!("rust-libp2p/{}", env!("CARGO_PKG_VERSION")),
@@ -114,6 +121,8 @@ impl Config {
             interval: Duration::from_secs(5 * 60),
             push_listen_addr_updates: false,
             cache_size: 100,
+            protocol_name,
+            push_protocol_name,
         }
     }
 
@@ -145,22 +154,17 @@ impl Config {
     }
 }
 
-impl<TCodec: Codec> Behaviour<TCodec> {
+impl<TInfo: Info, TCodec: Codec<TInfo>> Behaviour<TInfo, TCodec> {
     /// Creates a new identify [`Behaviour`].
-    pub fn new(config: Config) -> Self {
-        let discovered_peers = match NonZeroUsize::new(config.cache_size) {
-            None => PeerCache::disabled(),
-            Some(size) => PeerCache::enabled(size),
-        };
-
+    pub fn new(config: Config, local_info: TInfo) -> Self {
         Self {
             config,
             connected: HashMap::new(),
             our_observed_addresses: Default::default(),
             events: VecDeque::new(),
-            discovered_peers,
             listen_addresses: Default::default(),
             external_addresses: Default::default(),
+            local_info,
             _marker: PhantomData,
         }
     }
@@ -190,7 +194,6 @@ impl<TCodec: Codec> Behaviour<TCodec> {
             peer_id,
             connection_id: conn,
             endpoint,
-            failed_addresses,
             ..
         }: ConnectionEstablished,
     ) {
@@ -203,12 +206,6 @@ impl<TCodec: Codec> Behaviour<TCodec> {
             .entry(peer_id)
             .or_default()
             .insert(conn, addr);
-
-        if let Some(entry) = self.discovered_peers.get_mut(&peer_id) {
-            for addr in failed_addresses {
-                entry.remove(addr);
-            }
-        }
     }
 
     fn all_addresses(&self) -> HashSet<Multiaddr> {
@@ -220,25 +217,24 @@ impl<TCodec: Codec> Behaviour<TCodec> {
     }
 }
 
-impl<TCodec: Codec> NetworkBehaviour for Behaviour<TCodec> {
-    type ConnectionHandler = Handler<TCodec>;
-    type ToSwarm = Event;
+impl<TInfo: Info, TCodec: Codec<TInfo>> NetworkBehaviour for Behaviour<TInfo, TCodec> {
+    type ConnectionHandler = Handler<TInfo, TCodec>;
+    type ToSwarm = Event<TInfo>;
 
     fn handle_established_inbound_connection(
         &mut self,
         _: ConnectionId,
         peer: PeerId,
         _: &Multiaddr,
-        remote_addr: &Multiaddr,
+        _remote_addr: &Multiaddr,
     ) -> Result<THandler<Self>, ConnectionDenied> {
         Ok(Handler::new(
             self.config.interval,
             peer,
-            self.config.local_public_key.clone(),
-            self.config.protocol_version.clone(),
-            self.config.agent_version.clone(),
-            remote_addr.clone(),
             self.all_addresses(),
+            self.local_info.clone(),
+            self.config.protocol_name.clone(),
+            self.config.push_protocol_name.clone(),
         ))
     }
 
@@ -246,61 +242,29 @@ impl<TCodec: Codec> NetworkBehaviour for Behaviour<TCodec> {
         &mut self,
         _: ConnectionId,
         peer: PeerId,
-        addr: &Multiaddr,
+        _addr: &Multiaddr,
         _: Endpoint,
     ) -> Result<THandler<Self>, ConnectionDenied> {
         Ok(Handler::new(
             self.config.interval,
             peer,
-            self.config.local_public_key.clone(),
-            self.config.protocol_version.clone(),
-            self.config.agent_version.clone(),
-            addr.clone(), // TODO: This is weird? That is the public address we dialed, shouldn't need to tell the other party?
             self.all_addresses(),
+            self.local_info.clone(),
+            self.config.protocol_name.clone(),
+            self.config.push_protocol_name.clone(),
         ))
     }
 
     fn on_connection_handler_event(
         &mut self,
         peer_id: PeerId,
-        id: ConnectionId,
+        _id: ConnectionId,
         event: THandlerOutEvent<Self>,
     ) {
         match event {
-            handler::Event::Identified(mut info) => {
-                // Remove invalid multiaddrs.
-                info.listen_addrs
-                    .retain(|addr| multiaddr_matches_peer_id(addr, &peer_id));
-
-                // Replace existing addresses to prevent other peer from filling up our memory.
-                self.discovered_peers
-                    .put(peer_id, info.listen_addrs.iter().cloned());
-
-                let observed = info.observed_addr.clone();
+            handler::Event::Identified(info) => {
                 self.events
                     .push_back(ToSwarm::GenerateEvent(Event::Received { peer_id, info }));
-
-                match self.our_observed_addresses.entry(id) {
-                    Entry::Vacant(not_yet_observed) => {
-                        not_yet_observed.insert(observed.clone());
-                        self.events
-                            .push_back(ToSwarm::NewExternalAddrCandidate(observed));
-                    }
-                    Entry::Occupied(already_observed) if already_observed.get() == &observed => {
-                        // No-op, we already observed this address.
-                    }
-                    Entry::Occupied(mut already_observed) => {
-                        tracing::info!(
-                            old_address=%already_observed.get(),
-                            new_address=%observed,
-                            "Our observed address on connection {id} changed",
-                        );
-
-                        *already_observed.get_mut() = observed.clone();
-                        self.events
-                            .push_back(ToSwarm::NewExternalAddrCandidate(observed));
-                    }
-                }
             }
             handler::Event::Identification => {
                 self.events
@@ -324,21 +288,6 @@ impl<TCodec: Codec> NetworkBehaviour for Behaviour<TCodec> {
         }
 
         Poll::Pending
-    }
-
-    fn handle_pending_outbound_connection(
-        &mut self,
-        _connection_id: ConnectionId,
-        maybe_peer: Option<PeerId>,
-        _addresses: &[Multiaddr],
-        _effective_role: Endpoint,
-    ) -> Result<Vec<Multiaddr>, ConnectionDenied> {
-        let peer = match maybe_peer {
-            None => return Ok(vec![]),
-            Some(peer) => peer,
-        };
-
-        Ok(self.discovered_peers.get(&peer))
     }
 
     fn on_swarm_event(&mut self, event: FromSwarm) {
@@ -390,15 +339,6 @@ impl<TCodec: Codec> NetworkBehaviour for Behaviour<TCodec> {
 
                 self.our_observed_addresses.remove(&connection_id);
             }
-            FromSwarm::DialFailure(DialFailure { peer_id, error, .. }) => {
-                if let Some(entry) = peer_id.and_then(|id| self.discovered_peers.get_mut(&id)) {
-                    if let DialError::Transport(errors) = error {
-                        for (addr, _error) in errors {
-                            entry.remove(addr);
-                        }
-                    }
-                }
-            }
             _ => {}
         }
     }
@@ -407,13 +347,13 @@ impl<TCodec: Codec> NetworkBehaviour for Behaviour<TCodec> {
 /// Event emitted  by the `Identify` behaviour.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
-pub enum Event {
+pub enum Event<TInfo: Info> {
     /// Identification information has been received from a peer.
     Received {
         /// The peer that has been identified.
         peer_id: PeerId,
         /// The information provided by the peer.
-        info: Info,
+        info: TInfo,
     },
     /// Identification information of the local node has been sent to a peer in
     /// response to an identification request.
@@ -428,7 +368,7 @@ pub enum Event {
         peer_id: PeerId,
         /// The full Info struct we pushed to the remote peer. Clients must
         /// do some diff'ing to know what has changed since the last push.
-        info: PushInfo,
+        info: TInfo::Push,
     },
     /// Error while attempting to identify the remote.
     Error {
@@ -437,80 +377,4 @@ pub enum Event {
         /// The error that occurred.
         error: StreamUpgradeError<UpgradeError>,
     },
-}
-
-/// If there is a given peer_id in the multiaddr, make sure it is the same as
-/// the given peer_id. If there is no peer_id for the peer in the mutiaddr, this returns true.
-fn multiaddr_matches_peer_id(addr: &Multiaddr, peer_id: &PeerId) -> bool {
-    let last_component = addr.iter().last();
-    if let Some(multiaddr::Protocol::P2p(multi_addr_peer_id)) = last_component {
-        return multi_addr_peer_id == *peer_id;
-    }
-    true
-}
-
-struct PeerCache(Option<LruCache<PeerId, HashSet<Multiaddr>>>);
-
-impl PeerCache {
-    fn disabled() -> Self {
-        Self(None)
-    }
-
-    fn enabled(size: NonZeroUsize) -> Self {
-        Self(Some(LruCache::new(size)))
-    }
-
-    fn get_mut(&mut self, peer: &PeerId) -> Option<&mut HashSet<Multiaddr>> {
-        self.0.as_mut()?.get_mut(peer)
-    }
-
-    fn put(&mut self, peer: PeerId, addresses: impl Iterator<Item = Multiaddr>) {
-        let cache = match self.0.as_mut() {
-            None => return,
-            Some(cache) => cache,
-        };
-
-        let addresses = addresses.filter_map(|a| a.with_p2p(peer).ok());
-        cache.put(peer, HashSet::from_iter(addresses));
-    }
-
-    fn get(&mut self, peer: &PeerId) -> Vec<Multiaddr> {
-        let cache = match self.0.as_mut() {
-            None => return Vec::new(),
-            Some(cache) => cache,
-        };
-
-        cache
-            .get(peer)
-            .cloned()
-            .map(Vec::from_iter)
-            .unwrap_or_default()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn check_multiaddr_matches_peer_id() {
-        let peer_id = PeerId::random();
-        let other_peer_id = PeerId::random();
-        let mut addr: Multiaddr = "/ip4/147.75.69.143/tcp/4001"
-            .parse()
-            .expect("failed to parse multiaddr");
-
-        let addr_without_peer_id: Multiaddr = addr.clone();
-        let mut addr_with_other_peer_id = addr.clone();
-
-        addr.push(multiaddr::Protocol::P2p(peer_id));
-        addr_with_other_peer_id.push(multiaddr::Protocol::P2p(other_peer_id));
-
-        assert!(multiaddr_matches_peer_id(&addr, &peer_id));
-        assert!(!multiaddr_matches_peer_id(
-            &addr_with_other_peer_id,
-            &peer_id
-        ));
-        assert!(multiaddr_matches_peer_id(&addr_without_peer_id, &peer_id));
-    }
 }

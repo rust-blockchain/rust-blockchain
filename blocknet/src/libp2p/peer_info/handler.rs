@@ -18,7 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use super::{protocol, Codec, Info, PushInfo, UpgradeError, PROTOCOL_NAME, PUSH_PROTOCOL_NAME};
+use super::{Codec, Info, UpgradeError};
 use either::Either;
 use futures::prelude::*;
 use futures_bounded::Timeout;
@@ -26,10 +26,8 @@ use futures_timer::Delay;
 use libp2p::core::upgrade::{ReadyUpgrade, SelectUpgrade};
 use libp2p::core::Multiaddr;
 use libp2p::identity::PeerId;
-use libp2p::identity::PublicKey;
 use libp2p::swarm::handler::{
     ConnectionEvent, DialUpgradeError, FullyNegotiatedInbound, FullyNegotiatedOutbound,
-    ProtocolSupport,
 };
 use libp2p::swarm::{
     ConnectionHandler, ConnectionHandlerEvent, StreamProtocol, StreamUpgradeError,
@@ -48,18 +46,18 @@ const MAX_CONCURRENT_STREAMS_PER_CONNECTION: usize = 10;
 /// Outbound requests are sent periodically. The handler performs expects
 /// at least one identification request to be answered by the remote before
 /// permitting the underlying connection to be closed.
-pub struct Handler<TCodec: Codec> {
+pub struct Handler<TInfo: Info, TCodec: Codec<TInfo>> {
     remote_peer_id: PeerId,
     /// Pending events to yield.
     events: SmallVec<
         [ConnectionHandlerEvent<
             Either<ReadyUpgrade<StreamProtocol>, ReadyUpgrade<StreamProtocol>>,
             (),
-            Event,
+            Event<TInfo>,
         >; 4],
     >,
 
-    active_streams: futures_bounded::FuturesSet<Result<Success, UpgradeError>>,
+    active_streams: futures_bounded::FuturesSet<Result<Success<TInfo>, UpgradeError>>,
 
     /// Future that fires when we need to identify the node again.
     trigger_next_identify: Delay,
@@ -70,28 +68,19 @@ pub struct Handler<TCodec: Codec> {
     /// The interval of `trigger_next_identify`, i.e. the recurrent delay.
     interval: Duration,
 
-    /// The public key of the local peer.
-    public_key: PublicKey,
-
-    /// Application-specific version of the protocol family used by the peer,
-    /// e.g. `ipfs/1.0.0` or `polkadot/1.0.0`.
-    protocol_version: String,
-
-    /// Name and version of the peer, similar to the `User-Agent` header in
-    /// the HTTP protocol.
-    agent_version: String,
-
-    /// Address observed by or for the remote.
-    observed_addr: Multiaddr,
+    /// Local info.
+    local_info: TInfo,
 
     /// Identify information about the remote peer.
-    remote_info: Option<Info>,
+    remote_info: Option<TInfo>,
 
     local_supported_protocols: SupportedProtocols,
-    remote_supported_protocols: HashSet<StreamProtocol>,
     external_addresses: HashSet<Multiaddr>,
 
-    _marker: PhantomData<TCodec>,
+    protocol_name: StreamProtocol,
+    push_protocol_name: StreamProtocol,
+
+    _marker: PhantomData<(TInfo, TCodec)>,
 }
 
 /// An event from `Behaviour` with the information requested by the `Handler`.
@@ -104,27 +93,26 @@ pub enum InEvent {
 /// Event produced by the `Handler`.
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-pub enum Event {
+pub enum Event<TInfo: Info> {
     /// We obtained identification information from the remote.
-    Identified(Info),
+    Identified(TInfo),
     /// We replied to an identification request from the remote.
     Identification,
     /// We actively pushed our identification information to the remote.
-    IdentificationPushed(PushInfo),
+    IdentificationPushed(TInfo::Push),
     /// Failed to identify the remote, or to reply to an identification request.
     IdentificationError(StreamUpgradeError<UpgradeError>),
 }
 
-impl<TCodec: Codec> Handler<TCodec> {
+impl<TInfo: Info, TCodec: Codec<TInfo>> Handler<TInfo, TCodec> {
     /// Creates a new `Handler`.
     pub fn new(
         interval: Duration,
         remote_peer_id: PeerId,
-        public_key: PublicKey,
-        protocol_version: String,
-        agent_version: String,
-        observed_addr: Multiaddr,
         external_addresses: HashSet<Multiaddr>,
+        local_info: TInfo,
+        protocol_name: StreamProtocol,
+        push_protocol_name: StreamProtocol,
     ) -> Self {
         Self {
             remote_peer_id,
@@ -136,14 +124,12 @@ impl<TCodec: Codec> Handler<TCodec> {
             trigger_next_identify: Delay::new(Duration::ZERO),
             exchanged_one_periodic_identify: false,
             interval,
-            public_key,
-            protocol_version,
-            agent_version,
-            observed_addr,
             local_supported_protocols: SupportedProtocols::default(),
-            remote_supported_protocols: HashSet::default(),
             remote_info: Default::default(),
             external_addresses,
+            local_info,
+            protocol_name,
+            push_protocol_name,
             _marker: PhantomData,
         }
     }
@@ -159,7 +145,7 @@ impl<TCodec: Codec> Handler<TCodec> {
     ) {
         match output {
             future::Either::Left(stream) => {
-                let info = self.build_info();
+                let info = self.local_info.clone();
 
                 if self
                     .active_streams
@@ -204,8 +190,8 @@ impl<TCodec: Codec> Handler<TCodec> {
                     tracing::warn!("Dropping outbound identify stream because we are at capacity");
                 }
             }
-            future::Either::Right(mut stream) => {
-                let info: PushInfo = self.build_info().into();
+            future::Either::Right(stream) => {
+                let info: TInfo::Push = self.local_info.clone().into();
 
                 if self
                     .active_streams
@@ -223,51 +209,8 @@ impl<TCodec: Codec> Handler<TCodec> {
         }
     }
 
-    fn build_info(&mut self) -> Info {
-        Info {
-            public_key: self.public_key.clone(),
-            protocol_version: self.protocol_version.clone(),
-            agent_version: self.agent_version.clone(),
-            listen_addrs: Vec::from_iter(self.external_addresses.iter().cloned()),
-            protocols: Vec::from_iter(self.local_supported_protocols.iter().cloned()),
-            observed_addr: self.observed_addr.clone(),
-        }
-    }
-
-    fn handle_incoming_info(&mut self, info: &Info) {
+    fn handle_incoming_info(&mut self, info: &TInfo) {
         self.remote_info.replace(info.clone());
-
-        self.update_supported_protocols_for_remote(info);
-    }
-
-    fn update_supported_protocols_for_remote(&mut self, remote_info: &Info) {
-        let new_remote_protocols = HashSet::from_iter(remote_info.protocols.clone());
-
-        let remote_added_protocols = new_remote_protocols
-            .difference(&self.remote_supported_protocols)
-            .cloned()
-            .collect::<HashSet<_>>();
-        let remote_removed_protocols = self
-            .remote_supported_protocols
-            .difference(&new_remote_protocols)
-            .cloned()
-            .collect::<HashSet<_>>();
-
-        if !remote_added_protocols.is_empty() {
-            self.events
-                .push(ConnectionHandlerEvent::ReportRemoteProtocols(
-                    ProtocolSupport::Added(remote_added_protocols),
-                ));
-        }
-
-        if !remote_removed_protocols.is_empty() {
-            self.events
-                .push(ConnectionHandlerEvent::ReportRemoteProtocols(
-                    ProtocolSupport::Removed(remote_removed_protocols),
-                ));
-        }
-
-        self.remote_supported_protocols = new_remote_protocols;
     }
 
     fn local_protocols_to_string(&mut self) -> String {
@@ -279,9 +222,9 @@ impl<TCodec: Codec> Handler<TCodec> {
     }
 }
 
-impl<TCodec: Codec> ConnectionHandler for Handler<TCodec> {
+impl<TInfo: Info, TCodec: Codec<TInfo>> ConnectionHandler for Handler<TInfo, TCodec> {
     type FromBehaviour = InEvent;
-    type ToBehaviour = Event;
+    type ToBehaviour = Event<TInfo>;
     type InboundProtocol =
         SelectUpgrade<ReadyUpgrade<StreamProtocol>, ReadyUpgrade<StreamProtocol>>;
     type OutboundProtocol = Either<ReadyUpgrade<StreamProtocol>, ReadyUpgrade<StreamProtocol>>;
@@ -291,8 +234,8 @@ impl<TCodec: Codec> ConnectionHandler for Handler<TCodec> {
     fn listen_protocol(&self) -> SubstreamProtocol<Self::InboundProtocol, Self::InboundOpenInfo> {
         SubstreamProtocol::new(
             SelectUpgrade::new(
-                ReadyUpgrade::new(PROTOCOL_NAME),
-                ReadyUpgrade::new(PUSH_PROTOCOL_NAME),
+                ReadyUpgrade::new(self.protocol_name.clone()),
+                ReadyUpgrade::new(self.push_protocol_name.clone()),
             ),
             (),
         )
@@ -307,7 +250,7 @@ impl<TCodec: Codec> ConnectionHandler for Handler<TCodec> {
                 self.events
                     .push(ConnectionHandlerEvent::OutboundSubstreamRequest {
                         protocol: SubstreamProtocol::new(
-                            Either::Right(ReadyUpgrade::new(PUSH_PROTOCOL_NAME)),
+                            Either::Right(ReadyUpgrade::new(self.push_protocol_name.clone())),
                             (),
                         ),
                     });
@@ -319,7 +262,8 @@ impl<TCodec: Codec> ConnectionHandler for Handler<TCodec> {
     fn poll(
         &mut self,
         cx: &mut Context<'_>,
-    ) -> Poll<ConnectionHandlerEvent<Self::OutboundProtocol, Self::OutboundOpenInfo, Event>> {
+    ) -> Poll<ConnectionHandlerEvent<Self::OutboundProtocol, Self::OutboundOpenInfo, Event<TInfo>>>
+    {
         if let Some(event) = self.events.pop() {
             return Poll::Ready(event);
         }
@@ -329,7 +273,7 @@ impl<TCodec: Codec> ConnectionHandler for Handler<TCodec> {
             self.trigger_next_identify.reset(self.interval);
             let event = ConnectionHandlerEvent::OutboundSubstreamRequest {
                 protocol: SubstreamProtocol::new(
-                    Either::Left(ReadyUpgrade::new(PROTOCOL_NAME)),
+                    Either::Left(ReadyUpgrade::new(self.protocol_name.clone())),
                     (),
                 ),
             };
@@ -424,7 +368,7 @@ impl<TCodec: Codec> ConnectionHandler for Handler<TCodec> {
                     self.events
                         .push(ConnectionHandlerEvent::OutboundSubstreamRequest {
                             protocol: SubstreamProtocol::new(
-                                Either::Right(ReadyUpgrade::new(PUSH_PROTOCOL_NAME)),
+                                Either::Right(ReadyUpgrade::new(self.push_protocol_name.clone())),
                                 (),
                             ),
                         });
@@ -435,9 +379,9 @@ impl<TCodec: Codec> ConnectionHandler for Handler<TCodec> {
     }
 }
 
-enum Success {
+enum Success<TInfo: Info> {
     SentIdentify,
-    ReceivedIdentify(Info),
-    SentIdentifyPush(PushInfo),
-    ReceivedIdentifyPush(PushInfo),
+    ReceivedIdentify(TInfo),
+    SentIdentifyPush(TInfo::Push),
+    ReceivedIdentifyPush(TInfo::Push),
 }

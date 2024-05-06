@@ -43,7 +43,7 @@
 
 pub use self::behaviour::{Behaviour, Config, Event};
 pub use self::codec::Codec;
-pub use self::protocol::{Info, PushInfo, UpgradeError, PROTOCOL_NAME, PUSH_PROTOCOL_NAME};
+pub use self::protocol::{Info, UpgradeError};
 
 mod behaviour;
 mod codec;
