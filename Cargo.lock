@@ -3753,6 +3753,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "sync-extra"
+version = "0.1.0"
+
+[[package]]
 name = "synstructure"
 version = "0.12.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"

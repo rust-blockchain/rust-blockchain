@@ -1,0 +1,8 @@
+[package]
+name = "sync-extra"
+version = "0.1.0"
+description = "Convenience functions to Mutex and RwLock."
+
+authors.workspace = true
+license.workspace = true
+edition.workspace = true

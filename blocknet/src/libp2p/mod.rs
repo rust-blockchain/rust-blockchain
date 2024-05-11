@@ -80,7 +80,26 @@ pub struct PeerInfo<Extra> {
     extra: Extra,
 }
 
-pub struct NetworkService<PeerExtraInfo> {
+pub struct Service<PeerExtraInfo> {
     peers: Arc<RwLock<HashMap<PeerId, PeerInfo<PeerExtraInfo>>>>,
+    local_info: Arc<RwLock<PeerInfo<PeerExtraInfo>>>,
     sender: mpsc::Sender<ActionItem>,
+}
+
+impl<PeerExtraInfo> ServiceT for Service<PeerExtraInfo> {
+    type PeerId = PeerId;
+    type PeerInfo = PeerInfo<PeerExtraInfo>;
+    type Error = Error;
+
+    fn local_info(&self) -> Self::PeerInfo {
+        unimplemented!()
+    }
+
+    fn set_local_info(&self, info: Self::PeerInfo) -> Result<(), Self::Error> {
+        unimplemented!()
+    }
+
+    fn peers(&self) -> impl IntoIterator<Item = (Self::PeerId, Self::PeerInfo)> {
+        unimplemented!()
+    }
 }

@@ -10,4 +10,5 @@ members = [
 	"blockchain",
 	"blocknet",
 	"tinyjam",
+	"util/sync-extra",
 ]
