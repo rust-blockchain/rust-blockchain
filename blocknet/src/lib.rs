@@ -3,5 +3,6 @@ mod service;
 pub mod libp2p;
 
 pub use crate::service::{
-    NetworkEvent, NetworkMessageService, NetworkRequestService, NetworkService,
+    BroadcastService, EventWithMessage, EventWithOrigin, EventWithReceiver, MessageService,
+    NotifyService, RequestService, Service,
 };

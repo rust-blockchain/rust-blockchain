@@ -1,7 +1,7 @@
 use futures::stream::Stream;
 use std::future::Future;
 
-pub trait NetworkService: Send {
+pub trait Service: Send {
     type PeerId;
     type PeerInfo;
     type Error;
@@ -11,29 +11,54 @@ pub trait NetworkService: Send {
     fn peers(&self) -> impl IntoIterator<Item = (Self::PeerId, Self::PeerInfo)>;
 }
 
-pub struct NetworkEvent<PeerId, Message> {
-    pub origin: PeerId,
-    pub message: Message,
+pub trait EventWithOrigin {
+    type Origin;
+
+    fn origin(&self) -> &Self::Origin;
 }
 
-pub trait NetworkMessageService<Message>: NetworkService {
-    fn broadcast(&self, message: Message) -> impl Future<Output = Result<(), Self::Error>> + Send;
+pub trait EventWithMessage {
+    type Message;
 
+    fn message(&self) -> &Self::Message;
+    fn into_message(self) -> Self::Message;
+}
+
+pub trait EventWithReceiver {
+    type Receiver;
+
+    fn receiver(&self) -> &Self::Receiver;
+}
+
+pub trait MessageService<Msg>: Service {
+    type Event: EventWithOrigin<Origin = Self::PeerId> + EventWithMessage<Message = Msg>;
+
+    fn listen(&self) -> impl Stream<Item = Result<Self::Event, Self::Error>> + Send;
+}
+
+pub trait BroadcastService<Msg>: MessageService<Msg> {
+    fn broadcast(&self, message: Msg) -> impl Future<Output = Result<(), Self::Error>> + Send;
+}
+
+pub trait NotifyService<Msg>: MessageService<Msg>
+where
+    Self::Event: EventWithReceiver<Receiver = Self::PeerId>,
+{
     fn notify(
         &self,
         peer: Self::PeerId,
-        message: Message,
+        message: Msg,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
-
-    fn listen(
-        &self,
-    ) -> impl Stream<Item = Result<NetworkEvent<Self::PeerId, Message>, Self::Error>> + Send;
 }
 
-pub trait NetworkRequestService<Request, Response>: NetworkService {
+pub trait Request {
+    type Response;
+}
+
+pub trait RequestService<Req: Request>: Service {
     fn request(
         &self,
         peer: Self::PeerId,
-        request: Request,
-    ) -> impl Future<Output = Result<Response, Self::Error>> + Send;
+        request: Req,
+    ) -> impl Future<Output = Result<Req::Response, Self::Error>> + Send;
 }

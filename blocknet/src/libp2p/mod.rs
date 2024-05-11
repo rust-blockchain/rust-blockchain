@@ -1,8 +1,7 @@
 pub mod peer_info;
 
 use crate::{
-    NetworkMessageService as NetworkMessageServiceT,
-    NetworkRequestService as NetworkRequestServiceT, NetworkService as NetworkServiceT,
+    MessageService as MessageServiceT, RequestService as RequestServiceT, Service as ServiceT,
 };
 use futures::channel::mpsc;
 use libp2p::{
