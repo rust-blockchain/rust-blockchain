@@ -1,13 +1,13 @@
 use futures::stream::Stream;
-use std::future::Future;
+use std::{future::Future, ops::Deref};
 
 pub trait Service: Send {
     type PeerId;
     type PeerInfo;
     type Error;
 
-    fn local_info(&self) -> Self::PeerInfo;
-    fn set_local_info(&self, info: Self::PeerInfo) -> Result<(), Self::Error>;
+    fn local_info(&self) -> impl Deref<Target = Self::PeerInfo>;
+    fn set_local_info(&self, info: Self::PeerInfo);
     fn peers(&self) -> impl IntoIterator<Item = (Self::PeerId, Self::PeerInfo)>;
 }
 

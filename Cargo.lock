@@ -550,6 +550,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smallvec",
+ "sync-extra",
  "thiserror",
  "tracing",
  "void",

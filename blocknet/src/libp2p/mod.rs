@@ -12,8 +12,10 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     borrow::Cow,
     collections::HashMap,
+    ops::Deref,
     sync::{Arc, RwLock},
 };
+use sync_extra::RwLockExtra;
 
 pub type PeerId = libp2p::PeerId;
 pub type ProtocolName = Cow<'static, str>;
@@ -76,6 +78,7 @@ where
     queue: mpsc::Receiver<ActionItem>,
 }
 
+#[derive(Clone, Debug)]
 pub struct PeerInfo<Extra> {
     extra: Extra,
 }
@@ -86,20 +89,23 @@ pub struct Service<PeerExtraInfo> {
     sender: mpsc::Sender<ActionItem>,
 }
 
-impl<PeerExtraInfo> ServiceT for Service<PeerExtraInfo> {
+impl<PeerExtraInfo> ServiceT for Service<PeerExtraInfo>
+where
+    PeerExtraInfo: Clone + Send + Sync + 'static,
+{
     type PeerId = PeerId;
     type PeerInfo = PeerInfo<PeerExtraInfo>;
     type Error = Error;
 
-    fn local_info(&self) -> Self::PeerInfo {
-        unimplemented!()
+    fn local_info(&self) -> impl Deref<Target = Self::PeerInfo> {
+        self.local_info.read_unwrap()
     }
 
-    fn set_local_info(&self, info: Self::PeerInfo) -> Result<(), Self::Error> {
-        unimplemented!()
+    fn set_local_info(&self, info: Self::PeerInfo) {
+        *self.local_info.write_unwrap() = info;
     }
 
     fn peers(&self) -> impl IntoIterator<Item = (Self::PeerId, Self::PeerInfo)> {
-        unimplemented!()
+        Vec::new()
     }
 }
