@@ -1,10 +1,14 @@
 pub mod peer_info;
 
 use crate::{
-    Event as EventT, MessageService as MessageServiceT, RequestService as RequestServiceT,
+    BroadcastService as BroadcastServiceT, Event as EventT, MessageService as MessageServiceT,
     Service as ServiceT,
 };
-use futures::{channel::mpsc, stream::Stream};
+use futures::{
+    channel::mpsc,
+    sink::SinkExt,
+    stream::{Stream, TryStreamExt},
+};
 use libp2p::{
     gossipsub, identify, kad, mdns, request_response,
     swarm::{NetworkBehaviour, Swarm},
@@ -13,10 +17,14 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     borrow::Cow,
     collections::HashMap,
+    future::Future,
     ops::Deref,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
 };
-use sync_extra::RwLockExtra;
+use sync_extra::{MutexExtra, RwLockExtra};
+use thiserror::Error;
+
+const MESSAGE_CHANNEL_BUFFER_SIZE: usize = 16;
 
 pub type PeerId = libp2p::PeerId;
 pub type ProtocolName = Cow<'static, str>;
@@ -35,7 +43,7 @@ pub struct AnyResponse {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AnyMessage {
-    pub protocol_name: ProtocolName,
+    pub topic: &'static str,
     pub serialized: Vec<u8>,
 }
 
@@ -68,7 +76,13 @@ enum ActionItem {
     },
 }
 
-pub enum Error {}
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("Codec error")]
+    Codec(String),
+    #[error("Sender channel error")]
+    ChannelSend(#[from] mpsc::SendError),
+}
 
 pub struct NetworkWorker<Info>
 where
@@ -87,7 +101,9 @@ pub struct PeerInfo<Extra> {
 pub struct Service<PeerExtraInfo> {
     peers: Arc<RwLock<HashMap<PeerId, PeerInfo<PeerExtraInfo>>>>,
     local_info: Arc<RwLock<PeerInfo<PeerExtraInfo>>>,
-    sender: mpsc::Sender<ActionItem>,
+    listen_senders:
+        Arc<Mutex<HashMap<&'static str, mpsc::Sender<Result<(PeerId, AnyMessage), Error>>>>>,
+    action_sender: mpsc::Sender<ActionItem>,
 }
 
 impl<PeerExtraInfo> ServiceT for Service<PeerExtraInfo>
@@ -133,13 +149,52 @@ impl<Msg> EventT for Event<Msg> {
     }
 }
 
+pub trait Message: Send + Clone + Serialize + DeserializeOwned + 'static {
+    const TOPIC: &'static str;
+}
+
 impl<PeerExtraInfo, Msg> MessageServiceT<Msg> for Service<PeerExtraInfo>
 where
     PeerExtraInfo: Clone + Send + Sync + 'static,
+    Msg: Message,
 {
     type Event = Event<Msg>;
 
     fn listen(&self) -> impl Stream<Item = Result<Self::Event, Self::Error>> + Send {
-        async { unimplemented!() }
+        let (sender, receiver) = mpsc::channel(MESSAGE_CHANNEL_BUFFER_SIZE);
+
+        self.listen_senders.lock_unwrap().insert(Msg::TOPIC, sender);
+
+        let receiver: mpsc::Receiver<Result<(PeerId, AnyMessage), Error>> = receiver;
+        receiver.and_then(|(origin, msg)| async move {
+            Ok(Event {
+                origin,
+                message: serde_json::from_slice(&msg.serialized)
+                    .map_err(|e| Error::Codec(format!("{:?}", e)))?,
+            })
+        })
+    }
+}
+
+impl<PeerExtraInfo, Msg> BroadcastServiceT<Msg> for Service<PeerExtraInfo>
+where
+    PeerExtraInfo: Clone + Send + Sync + 'static,
+    Msg: Message,
+{
+    fn broadcast(&self, message: Msg) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        let mut action_sender = self.action_sender.clone();
+
+        async move {
+            let item = ActionItem::Broadcast {
+                message: AnyMessage {
+                    topic: Msg::TOPIC,
+                    serialized: serde_json::to_vec(&message)
+                        .map_err(|e| Error::Codec(format!("{:?}", e)))?,
+                },
+            };
+
+            action_sender.send(item).await?;
+            Ok(())
+        }
     }
 }
