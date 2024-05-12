@@ -11,26 +11,35 @@ pub trait Service: Send {
     fn peers(&self) -> impl IntoIterator<Item = (Self::PeerId, Self::PeerInfo)>;
 }
 
+pub trait Message {
+    type Topic;
+
+    fn topic(&self) -> Self::Topic;
+}
+
 pub trait Event {
     type Origin;
-    type Message;
+    type Message: Message;
 
     fn origin(&self) -> impl Deref<Target = Self::Origin>;
     fn message(&self) -> impl Deref<Target = Self::Message>;
     fn into_message(self) -> Self::Message;
 }
 
-pub trait MessageService<Msg>: Service {
+pub trait MessageService<Msg: Message>: Service {
     type Event: Event<Origin = Self::PeerId, Message = Msg>;
 
-    fn listen(&self) -> impl Stream<Item = Result<Self::Event, Self::Error>> + Send;
+    fn listen(
+        &self,
+        topic: Msg::Topic,
+    ) -> impl Stream<Item = Result<Self::Event, Self::Error>> + Send;
 }
 
-pub trait BroadcastService<Msg>: MessageService<Msg> {
+pub trait BroadcastService<Msg: Message>: MessageService<Msg> {
     fn broadcast(&self, message: Msg) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
-pub trait NotifyService<Msg>: MessageService<Msg> {
+pub trait NotifyService<Msg: Message>: MessageService<Msg> {
     fn notify(
         &self,
         peer: Self::PeerId,

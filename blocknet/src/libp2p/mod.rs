@@ -1,8 +1,8 @@
 pub mod peer_info;
 
 use crate::{
-    BroadcastService as BroadcastServiceT, Event as EventT, MessageService as MessageServiceT,
-    Service as ServiceT,
+    BroadcastService as BroadcastServiceT, Event as EventT, Message as MessageT,
+    MessageService as MessageServiceT, Service as ServiceT,
 };
 use futures::{
     channel::mpsc,
@@ -44,7 +44,7 @@ pub struct AnyResponse {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AnyMessage {
-    pub topic: &'static str,
+    pub topic: String,
     pub serialized: Vec<u8>,
 }
 
@@ -121,8 +121,7 @@ pub struct PeerInfo<Extra> {
 pub struct Service<PeerExtraInfo> {
     peers: Arc<RwLock<HashMap<PeerId, PeerInfo<PeerExtraInfo>>>>,
     local_info: Arc<RwLock<PeerInfo<PeerExtraInfo>>>,
-    listen_senders:
-        Arc<Mutex<HashMap<&'static str, mpsc::Sender<Result<(PeerId, AnyMessage), Error>>>>>,
+    listen_senders: Arc<Mutex<HashMap<String, mpsc::Sender<Result<(PeerId, AnyMessage), Error>>>>>,
     action_sender: mpsc::Sender<ActionItem>,
 }
 
@@ -152,7 +151,7 @@ pub struct Event<Msg> {
     message: Msg,
 }
 
-impl<Msg> EventT for Event<Msg> {
+impl<Msg: MessageT> EventT for Event<Msg> {
     type Origin = PeerId;
     type Message = Msg;
 
@@ -169,21 +168,23 @@ impl<Msg> EventT for Event<Msg> {
     }
 }
 
-pub trait Message: Send + Clone + Serialize + DeserializeOwned + 'static {
-    const TOPIC: &'static str;
-}
-
 impl<PeerExtraInfo, Msg> MessageServiceT<Msg> for Service<PeerExtraInfo>
 where
     PeerExtraInfo: Clone + Send + Sync + 'static,
-    Msg: Message,
+    Msg: MessageT + Send + Clone + Serialize + DeserializeOwned + 'static,
+    Msg::Topic: Into<String>,
 {
     type Event = Event<Msg>;
 
-    fn listen(&self) -> impl Stream<Item = Result<Self::Event, Self::Error>> + Send {
+    fn listen(
+        &self,
+        topic: Msg::Topic,
+    ) -> impl Stream<Item = Result<Self::Event, Self::Error>> + Send {
         let (sender, receiver) = mpsc::channel(MESSAGE_CHANNEL_BUFFER_SIZE);
 
-        self.listen_senders.lock_unwrap().insert(Msg::TOPIC, sender);
+        self.listen_senders
+            .lock_unwrap()
+            .insert(topic.into(), sender);
 
         let receiver: mpsc::Receiver<Result<(PeerId, AnyMessage), Error>> = receiver;
         receiver.and_then(|(origin, msg)| async move {
@@ -199,7 +200,8 @@ where
 impl<PeerExtraInfo, Msg> BroadcastServiceT<Msg> for Service<PeerExtraInfo>
 where
     PeerExtraInfo: Clone + Send + Sync + 'static,
-    Msg: Message,
+    Msg: MessageT + Send + Clone + Serialize + DeserializeOwned + 'static,
+    Msg::Topic: Into<String>,
 {
     fn broadcast(&self, message: Msg) -> impl Future<Output = Result<(), Self::Error>> + Send {
         let mut action_sender = self.action_sender.clone();
@@ -207,7 +209,7 @@ where
         async move {
             let item = ActionItem::Broadcast {
                 message: AnyMessage {
-                    topic: Msg::TOPIC,
+                    topic: message.topic().into(),
                     serialized: serde_json::to_vec(&message)
                         .map_err(|e| Error::Codec(format!("{:?}", e)))?,
                 },
