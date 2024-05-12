@@ -17,6 +17,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     borrow::Cow,
     collections::HashMap,
+    convert::Infallible,
     future::Future,
     ops::Deref,
     sync::{Arc, Mutex, RwLock},
@@ -91,6 +92,25 @@ where
 {
     swarm: Swarm<Behaviour<Info>>,
     queue: mpsc::Receiver<ActionItem>,
+}
+
+impl<Info> NetworkWorker<Info>
+where
+    Info: peer_info::Info + Serialize + DeserializeOwned + Send + 'static,
+    Info::Push: Serialize + DeserializeOwned + Send + 'static,
+{
+    pub async fn run(mut self) -> Result<Infallible, Error> {
+        loop {
+            match self.step().await {
+                Ok(()) => (),
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    pub async fn step(&mut self) -> Result<(), Error> {
+        unimplemented!()
+    }
 }
 
 #[derive(Clone, Debug)]
