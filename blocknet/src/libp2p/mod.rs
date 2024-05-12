@@ -1,9 +1,10 @@
 pub mod peer_info;
 
 use crate::{
-    MessageService as MessageServiceT, RequestService as RequestServiceT, Service as ServiceT,
+    Event as EventT, MessageService as MessageServiceT, RequestService as RequestServiceT,
+    Service as ServiceT,
 };
-use futures::channel::mpsc;
+use futures::{channel::mpsc, stream::Stream};
 use libp2p::{
     gossipsub, identify, kad, mdns, request_response,
     swarm::{NetworkBehaviour, Swarm},
@@ -106,6 +107,39 @@ where
     }
 
     fn peers(&self) -> impl IntoIterator<Item = (Self::PeerId, Self::PeerInfo)> {
-        Vec::new()
+        self.peers.read_unwrap().clone()
+    }
+}
+
+pub struct Event<Msg> {
+    origin: PeerId,
+    message: Msg,
+}
+
+impl<Msg> EventT for Event<Msg> {
+    type Origin = PeerId;
+    type Message = Msg;
+
+    fn origin(&self) -> impl Deref<Target = Self::Origin> {
+        &self.origin
+    }
+
+    fn message(&self) -> impl Deref<Target = Msg> {
+        &self.message
+    }
+
+    fn into_message(self) -> Msg {
+        self.message
+    }
+}
+
+impl<PeerExtraInfo, Msg> MessageServiceT<Msg> for Service<PeerExtraInfo>
+where
+    PeerExtraInfo: Clone + Send + Sync + 'static,
+{
+    type Event = Event<Msg>;
+
+    fn listen(&self) -> impl Stream<Item = Result<Self::Event, Self::Error>> + Send {
+        async { unimplemented!() }
     }
 }
