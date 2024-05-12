@@ -18,6 +18,7 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     convert::Infallible,
+    fmt::Debug,
     future::Future,
     ops::Deref,
     sync::{Arc, Mutex, RwLock},
@@ -48,20 +49,6 @@ pub struct AnyMessage {
     pub serialized: Vec<u8>,
 }
 
-#[derive(NetworkBehaviour)]
-struct Behaviour<Info>
-where
-    Info: peer_info::Info + Serialize + DeserializeOwned + Send + 'static,
-    Info::Push: Serialize + DeserializeOwned + Send + 'static,
-{
-    gossipsub: gossipsub::Behaviour,
-    kademlia: kad::Behaviour<kad::store::MemoryStore>,
-    identify: identify::Behaviour,
-    peer_info: peer_info::json::Behaviour<Info>,
-    mdns: mdns::tokio::Behaviour,
-    request_response: request_response::json::Behaviour<AnyRequest, AnyResponse>,
-}
-
 enum ActionItem {
     Broadcast {
         message: AnyMessage,
@@ -85,19 +72,33 @@ pub enum Error {
     ChannelSend(#[from] mpsc::SendError),
 }
 
-pub struct NetworkWorker<Info>
+#[derive(NetworkBehaviour)]
+struct Behaviour<PeerExtraInfo>
 where
-    Info: peer_info::Info + Serialize + DeserializeOwned + Send + 'static,
-    Info::Push: Serialize + DeserializeOwned + Send + 'static,
+    PeerExtraInfo: Debug + Clone + Serialize + DeserializeOwned + Send + 'static,
 {
-    swarm: Swarm<Behaviour<Info>>,
-    queue: mpsc::Receiver<ActionItem>,
+    gossipsub: gossipsub::Behaviour,
+    kademlia: kad::Behaviour<kad::store::MemoryStore>,
+    identify: identify::Behaviour,
+    peer_info: peer_info::json::Behaviour<PeerInfo<PeerExtraInfo>>,
+    mdns: mdns::tokio::Behaviour,
+    request_response: request_response::json::Behaviour<AnyRequest, AnyResponse>,
 }
 
-impl<Info> NetworkWorker<Info>
+pub struct Worker<PeerExtraInfo>
 where
-    Info: peer_info::Info + Serialize + DeserializeOwned + Send + 'static,
-    Info::Push: Serialize + DeserializeOwned + Send + 'static,
+    PeerExtraInfo: Debug + Clone + Serialize + DeserializeOwned + Send + 'static,
+{
+    swarm: Swarm<Behaviour<PeerExtraInfo>>,
+    peers: Arc<RwLock<HashMap<PeerId, PeerInfo<PeerExtraInfo>>>>,
+    local_info: Arc<RwLock<PeerInfo<PeerExtraInfo>>>,
+    listen_senders: Arc<Mutex<HashMap<String, mpsc::Sender<Result<(PeerId, AnyMessage), Error>>>>>,
+    action_receiver: mpsc::Receiver<ActionItem>,
+}
+
+impl<PeerExtraInfo> Worker<PeerExtraInfo>
+where
+    PeerExtraInfo: Debug + Clone + Serialize + DeserializeOwned + Send + 'static,
 {
     pub async fn run(mut self) -> Result<Infallible, Error> {
         loop {
@@ -113,9 +114,20 @@ where
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PeerInfo<Extra> {
     extra: Extra,
+}
+
+impl<Extra> peer_info::Info for PeerInfo<Extra>
+where
+    Extra: Debug + Clone + Send + 'static,
+{
+    type Push = Self;
+
+    fn merge(&mut self, push: Self::Push) {
+        *self = push;
+    }
 }
 
 pub struct Service<PeerExtraInfo> {
