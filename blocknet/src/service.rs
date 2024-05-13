@@ -6,7 +6,7 @@ pub trait Service: Send {
     type PeerInfo;
     type Error;
 
-    fn local_info(&self) -> impl Deref<Target = Self::PeerInfo>;
+    fn local_info(&self) -> Self::PeerInfo;
     fn set_local_info(&mut self, info: Self::PeerInfo);
     fn peers(&self) -> impl IntoIterator<Item = (Self::PeerId, Self::PeerInfo)>;
 }

@@ -23,9 +23,9 @@ use std::{
     fmt::Debug,
     future::Future,
     ops::Deref,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, RwLock},
 };
-use sync_extra::{MutexExtra, RwLockExtra};
+use sync_extra::RwLockExtra;
 use thiserror::Error;
 
 const MESSAGE_CHANNEL_BUFFER_SIZE: usize = 16;
@@ -77,25 +77,25 @@ pub enum Error {
 }
 
 #[derive(NetworkBehaviour)]
-struct Behaviour<PeerExtraInfo>
+struct Behaviour<PeerInfo>
 where
-    PeerExtraInfo: Debug + Clone + Serialize + DeserializeOwned + Send + 'static,
+    PeerInfo: Debug + Clone + Serialize + DeserializeOwned + Send + 'static,
 {
     gossipsub: gossipsub::Behaviour,
     kademlia: kad::Behaviour<kad::store::MemoryStore>,
     identify: identify::Behaviour,
-    peer_info: peer_info::json::Behaviour<PeerInfo<PeerExtraInfo>>,
+    peer_info: peer_info::json::Behaviour<PeerFullInfo<PeerInfo>>,
     mdns: mdns::tokio::Behaviour,
     request_response: request_response::json::Behaviour<AnyRequest, AnyResponse>,
 }
 
-pub struct Worker<PeerExtraInfo>
+pub struct Worker<PeerInfo>
 where
-    PeerExtraInfo: Debug + Clone + Serialize + DeserializeOwned + Send + 'static,
+    PeerInfo: Debug + Clone + Serialize + DeserializeOwned + Send + 'static,
 {
-    swarm: Swarm<Behaviour<PeerExtraInfo>>,
-    peers: Arc<RwLock<HashMap<PeerId, PeerInfo<PeerExtraInfo>>>>,
-    local_info: Arc<RwLock<PeerInfo<PeerExtraInfo>>>,
+    swarm: Swarm<Behaviour<PeerInfo>>,
+    peers: Arc<RwLock<HashMap<PeerId, PeerFullInfo<PeerInfo>>>>,
+    local_info: Arc<RwLock<PeerFullInfo<PeerInfo>>>,
     broadcast_listen_senders: HashMap<
         gossipsub::TopicHash,
         (
@@ -179,13 +179,13 @@ where
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PeerInfo<Extra> {
-    extra: Extra,
+pub struct PeerFullInfo<PeerInfo> {
+    info: PeerInfo,
 }
 
-impl<Extra> peer_info::Info for PeerInfo<Extra>
+impl<PeerInfo> peer_info::Info for PeerFullInfo<PeerInfo>
 where
-    Extra: Debug + Clone + Send + 'static,
+    PeerInfo: Debug + Clone + Send + 'static,
 {
     type Push = Self;
 
@@ -194,30 +194,34 @@ where
     }
 }
 
-pub struct Service<PeerExtraInfo> {
-    peers: Arc<RwLock<HashMap<PeerId, PeerInfo<PeerExtraInfo>>>>,
-    local_info: Arc<RwLock<PeerInfo<PeerExtraInfo>>>,
+pub struct Service<PeerInfo> {
+    peers: Arc<RwLock<HashMap<PeerId, PeerFullInfo<PeerInfo>>>>,
+    local_info: Arc<RwLock<PeerFullInfo<PeerInfo>>>,
     action_sender: mpsc::Sender<ActionItem>,
 }
 
-impl<PeerExtraInfo> ServiceT for Service<PeerExtraInfo>
+impl<PeerInfo> ServiceT for Service<PeerInfo>
 where
-    PeerExtraInfo: Clone + Send + Sync + 'static,
+    PeerInfo: Clone + Send + Sync + 'static,
 {
     type PeerId = PeerId;
-    type PeerInfo = PeerInfo<PeerExtraInfo>;
+    type PeerInfo = PeerInfo;
     type Error = Error;
 
-    fn local_info(&self) -> impl Deref<Target = Self::PeerInfo> {
-        self.local_info.read_unwrap()
+    fn local_info(&self) -> Self::PeerInfo {
+        self.local_info.read_unwrap().clone().info
     }
 
     fn set_local_info(&mut self, info: Self::PeerInfo) {
-        *self.local_info.write_unwrap() = info;
+        self.local_info.write_unwrap().info = info;
     }
 
     fn peers(&self) -> impl IntoIterator<Item = (Self::PeerId, Self::PeerInfo)> {
-        self.peers.read_unwrap().clone()
+        self.peers
+            .read_unwrap()
+            .clone()
+            .into_iter()
+            .map(|(peer_id, info)| (peer_id, info.info))
     }
 }
 
