@@ -7,8 +7,17 @@ pub trait Service: Send {
     type Error;
 
     fn local_info(&self) -> impl Deref<Target = Self::PeerInfo>;
-    fn set_local_info(&self, info: Self::PeerInfo);
+    fn set_local_info(&mut self, info: Self::PeerInfo);
     fn peers(&self) -> impl IntoIterator<Item = (Self::PeerId, Self::PeerInfo)>;
+}
+
+pub trait Event {
+    type Origin;
+    type Value;
+
+    fn origin(&self) -> impl Deref<Target = Self::Origin>;
+    fn value(&self) -> impl Deref<Target = Self::Value>;
+    fn into_value(self) -> Self::Value;
 }
 
 pub trait Message {
@@ -17,33 +26,24 @@ pub trait Message {
     fn topic(&self) -> Self::Topic;
 }
 
-pub trait Event {
-    type Origin;
-    type Message: Message;
-
-    fn origin(&self) -> impl Deref<Target = Self::Origin>;
-    fn message(&self) -> impl Deref<Target = Self::Message>;
-    fn into_message(self) -> Self::Message;
-}
-
-pub trait MessageService<Msg: Message>: Service {
-    type Event: Event<Origin = Self::PeerId, Message = Msg>;
+pub trait BroadcastService<Msg: Message>: Service {
+    type Event: Event<Origin = Self::PeerId, Value = Msg>;
 
     fn listen(
-        &self,
+        &mut self,
         topic: Msg::Topic,
     ) -> impl Stream<Item = Result<Self::Event, Self::Error>> + Send;
+    fn broadcast(&mut self, message: Msg) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
-pub trait BroadcastService<Msg: Message>: MessageService<Msg> {
-    fn broadcast(&self, message: Msg) -> impl Future<Output = Result<(), Self::Error>> + Send;
-}
+pub trait NotifyService<Not>: Service {
+    type Event: Event<Origin = Self::PeerId, Value = Not>;
 
-pub trait NotifyService<Msg: Message>: MessageService<Msg> {
+    fn listen(&mut self) -> impl Stream<Item = Result<Self::Event, Self::Error>> + Send;
     fn notify(
-        &self,
+        &mut self,
         peer: Self::PeerId,
-        message: Msg,
+        notification: Not,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
@@ -52,9 +52,20 @@ pub trait Request {
 }
 
 pub trait RequestService<Req: Request>: Service {
+    type Event: Event<Origin = Self::PeerId, Value = Req>;
+    type Channel;
+
+    fn listen(
+        &mut self,
+    ) -> impl Future<Output = Result<(Self::Channel, Self::Event), Self::Error>> + Send;
     fn request(
-        &self,
+        &mut self,
         peer: Self::PeerId,
         request: Req,
     ) -> impl Future<Output = Result<Req::Response, Self::Error>> + Send;
+    fn respond(
+        &mut self,
+        channel: Self::Channel,
+        response: Req::Response,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
