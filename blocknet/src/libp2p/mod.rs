@@ -29,6 +29,7 @@ use sync_extra::RwLockExtra;
 use thiserror::Error;
 
 const MESSAGE_CHANNEL_BUFFER_SIZE: usize = 16;
+const ACTION_CHANNEL_BUFFER_SIZE: usize = 64;
 
 pub type PeerId = libp2p::PeerId;
 pub type ProtocolName = Cow<'static, str>;
@@ -64,13 +65,17 @@ enum ActionItem {
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Codec error")]
-    Codec(String),
+    Codec(String), // TODO: Change this to Box<dyn Error>.
     #[error("Sender channel error")]
     ChannelSend(#[from] mpsc::SendError),
     #[error("Gossipsub subscription")]
     GossipsubSubscription(#[from] gossipsub::SubscriptionError),
     #[error("Gossipsub publish")]
     GossipsubPublish(#[from] gossipsub::PublishError),
+    #[error("Noise error")]
+    Noise(#[from] libp2p::noise::Error),
+    #[error("Build error")]
+    Build(Box<dyn std::error::Error + Send + Sync + 'static>),
 
     #[error("Broadcast message with an unknown source")]
     UnknownOriginBroadcast(AnyMessage),
@@ -104,12 +109,60 @@ where
         ),
     >,
     action_receiver: mpsc::Receiver<ActionItem>,
+    action_sender: mpsc::Sender<ActionItem>,
 }
 
-impl<PeerExtraInfo> Worker<PeerExtraInfo>
+impl<PeerInfo> Worker<PeerInfo>
 where
-    PeerExtraInfo: Debug + Clone + Serialize + DeserializeOwned + Send + 'static,
+    PeerInfo: Debug + Clone + Serialize + DeserializeOwned + Send + 'static,
 {
+    pub fn new(local_info: PeerInfo) -> Result<Self, Error> {
+        let swarm = libp2p::SwarmBuilder::with_new_identity()
+            .with_tokio()
+            .with_tcp(
+                libp2p::tcp::Config::default(),
+                libp2p::noise::Config::new,
+                libp2p::yamux::Config::default,
+            )?
+            .with_quic()
+            .with_behaviour(|key| {
+                let gossipsub = gossipsub::Behaviour::new(
+                    gossipsub::MessageAuthenticity::Signed(key.clone()),
+                    Default::default(),
+                )?;
+
+                Ok(Behaviour::<PeerInfo> {
+                    gossipsub,
+                    kademlia: todo!(),
+                    identify: todo!(),
+                    peer_info: todo!(),
+                    mdns: todo!(),
+                    request_response: todo!(),
+                })
+            })
+            .map_err(|e| Error::Build(Box::new(e)))?
+            .build();
+
+        let (action_sender, action_receiver) = mpsc::channel(ACTION_CHANNEL_BUFFER_SIZE);
+
+        Ok(Self {
+            swarm,
+            peers: Arc::new(RwLock::new(Default::default())),
+            local_info: Arc::new(RwLock::new(PeerFullInfo { info: local_info })),
+            broadcast_listen_senders: Default::default(),
+            action_sender,
+            action_receiver,
+        })
+    }
+
+    pub fn service(&self) -> Service<PeerInfo> {
+        Service {
+            peers: self.peers.clone(),
+            local_info: self.local_info.clone(),
+            action_sender: self.action_sender.clone(),
+        }
+    }
+
     pub async fn run(mut self) -> Result<Infallible, Error> {
         loop {
             match self.step().await {
@@ -150,6 +203,7 @@ where
                         message, ..
                     })) => {
                         if let Some(entry) = self.broadcast_listen_senders.get_mut(&message.topic) {
+                            // TODO: Unsubscribe from topic when the entry becomes empty.
                             entry.1.retain(|sender| sender.is_closed());
 
                             let topic = entry.0.clone();
@@ -194,6 +248,7 @@ where
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Service<PeerInfo> {
     peers: Arc<RwLock<HashMap<PeerId, PeerFullInfo<PeerInfo>>>>,
     local_info: Arc<RwLock<PeerFullInfo<PeerInfo>>>,
