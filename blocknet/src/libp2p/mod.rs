@@ -13,7 +13,7 @@ use futures::{
 };
 use libp2p::{
     gossipsub, identify, kad, mdns, request_response,
-    swarm::{NetworkBehaviour, Swarm, SwarmEvent},
+    swarm::{NetworkBehaviour, StreamProtocol, Swarm, SwarmEvent},
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
@@ -126,17 +126,40 @@ where
             )?
             .with_quic()
             .with_behaviour(|key| {
+                let peer_id = PeerId::from_public_key(&key.public());
+
                 let gossipsub = gossipsub::Behaviour::new(
                     gossipsub::MessageAuthenticity::Signed(key.clone()),
                     Default::default(),
                 )?;
 
+                let kademlia = kad::Behaviour::new(peer_id, kad::store::MemoryStore::new(peer_id));
+
+                let identify = identify::Behaviour::new(identify::Config::new(
+                    "blocknet/v0.1".to_string(),
+                    key.public(),
+                ));
+
+                let peer_info = peer_info::json::Behaviour::new(
+                    peer_info::Config::new(
+                        "blocknet/v0.1".to_string(),
+                        key.public(),
+                        StreamProtocol::new("blocknet/peer_info/v0.1"),
+                        StreamProtocol::new("blocknet/peer_info/push/v0.1"),
+                    ),
+                    PeerFullInfo {
+                        info: local_info.clone(),
+                    },
+                );
+
+                let mdns = mdns::Behaviour::new(mdns::Config::default(), peer_id.clone())?;
+
                 Ok(Behaviour::<PeerInfo> {
                     gossipsub,
-                    kademlia: todo!(),
-                    identify: todo!(),
-                    peer_info: todo!(),
-                    mdns: todo!(),
+                    kademlia,
+                    identify,
+                    peer_info,
+                    mdns,
                     request_response: todo!(),
                 })
             })
