@@ -154,13 +154,27 @@ where
 
                 let mdns = mdns::Behaviour::new(mdns::Config::default(), peer_id.clone())?;
 
+                let request_response = request_response::Behaviour::new(
+                    // TODO: At this moment we just allow all request/response types to be
+                    // communicated via a single protocol. It's reasonable to expect that
+                    // users will want to restrict this and negioate protocol types in
+                    // advance. In those situations, we will introduce a new `Metadata` type
+                    // that needs to be implemented by all request/response types, and default
+                    // it to `AnyMetadata`. The same is with notifications and broadcasts.
+                    vec![(
+                        StreamProtocol::new("blocknet/request_response/v0.1"),
+                        request_response::ProtocolSupport::Full,
+                    )],
+                    request_response::Config::default(),
+                );
+
                 Ok(Behaviour::<PeerInfo> {
                     gossipsub,
                     kademlia,
                     identify,
                     peer_info,
                     mdns,
-                    request_response: todo!(),
+                    request_response,
                 })
             })
             .map_err(|e| Error::Build(Box::new(e)))?
