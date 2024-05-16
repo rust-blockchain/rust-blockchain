@@ -26,3 +26,6 @@ smallvec = "1.13.2"
 lru = "0.12.1"
 
 sync-extra = { version = "0.1.0", path = "../util/sync-extra" }
+
+[dev-dependencies]
+tokio = { version = "1.37", features = ["full"] }

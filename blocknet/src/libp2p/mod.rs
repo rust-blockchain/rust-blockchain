@@ -136,16 +136,16 @@ where
                 let kademlia = kad::Behaviour::new(peer_id, kad::store::MemoryStore::new(peer_id));
 
                 let identify = identify::Behaviour::new(identify::Config::new(
-                    "blocknet/v0.1".to_string(),
+                    "/blocknet/v0.1".to_string(),
                     key.public(),
                 ));
 
                 let peer_info = peer_info::json::Behaviour::new(
                     peer_info::Config::new(
-                        "blocknet/v0.1".to_string(),
+                        "/blocknet/v0.1".to_string(),
                         key.public(),
-                        StreamProtocol::new("blocknet/peer_info/v0.1"),
-                        StreamProtocol::new("blocknet/peer_info/push/v0.1"),
+                        StreamProtocol::new("/blocknet/peer_info/v0.1"),
+                        StreamProtocol::new("/blocknet/peer_info/push/v0.1"),
                     ),
                     PeerFullInfo {
                         info: local_info.clone(),
@@ -162,7 +162,7 @@ where
                     // that needs to be implemented by all request/response types, and default
                     // it to `AnyMetadata`. The same is with notifications and broadcasts.
                     vec![(
-                        StreamProtocol::new("blocknet/request_response/v0.1"),
+                        StreamProtocol::new("/blocknet/request_response/v0.1"),
                         request_response::ProtocolSupport::Full,
                     )],
                     request_response::Config::default(),
