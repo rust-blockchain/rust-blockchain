@@ -29,3 +29,4 @@ sync-extra = { version = "0.1.0", path = "../util/sync-extra" }
 
 [dev-dependencies]
 tokio = { version = "1.37", features = ["full"] }
+tracing-subscriber = "0.3"

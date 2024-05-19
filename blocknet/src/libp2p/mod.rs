@@ -27,6 +27,7 @@ use std::{
 };
 use sync_extra::RwLockExtra;
 use thiserror::Error;
+use tracing::error;
 
 const MESSAGE_CHANNEL_BUFFER_SIZE: usize = 16;
 const ACTION_CHANNEL_BUFFER_SIZE: usize = 64;
@@ -60,6 +61,26 @@ enum ActionItem {
         sender: mpsc::Sender<Result<(PeerId, AnyMessage), Error>>,
         topic: String,
     },
+}
+
+#[derive(Debug, Error)]
+pub enum FatalRunError {}
+
+#[derive(Debug, Error)]
+pub enum RunError {
+    #[error("Normal run error")]
+    Normal(Error),
+    #[error("Critical error")]
+    Fatal(#[from] FatalRunError),
+}
+
+impl<T> From<T> for RunError
+where
+    Error: From<T>,
+{
+    fn from(value: T) -> RunError {
+        RunError::Normal(Error::from(value))
+    }
 }
 
 #[derive(Debug, Error)]
@@ -200,16 +221,19 @@ where
         }
     }
 
-    pub async fn run(mut self) -> Result<Infallible, Error> {
+    pub async fn run(mut self) -> Result<Infallible, FatalRunError> {
         loop {
             match self.step().await {
                 Ok(()) => (),
-                Err(err) => return Err(err),
+                Err(RunError::Normal(e)) => {
+                    error!("Worker run normal error: {:?}", e)
+                }
+                Err(RunError::Fatal(e)) => return Err(e),
             }
         }
     }
 
-    pub async fn step(&mut self) -> Result<(), Error> {
+    pub async fn step(&mut self) -> Result<(), RunError> {
         select! {
             action = self.action_receiver.select_next_some() => {
                 match action {
@@ -317,6 +341,7 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct Event<Value> {
     origin: PeerId,
     value: Value,
