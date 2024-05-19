@@ -42,6 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut stream_service = service.clone();
     let mut broadcast_stream = Box::pin(
         BroadcastService::<SimpleBroadcast>::listen(&mut stream_service, SimpleBroadcastTopic)
+            .await?
             .fuse(),
     );
 
@@ -65,11 +66,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             },
-            broadcast_next = broadcast_stream.select_next_some() => {
-                match broadcast_next {
-                    Ok(message) => info!("Received message: {:?}", message),
-                    Err(e) => info!("Receive error: {:?}", e),
-                }
+            message = broadcast_stream.select_next_some() => {
+                info!("Received message: {:?}", message)
             },
             worker_err = worker_handle => {
                 if let Err(e) = worker_err {

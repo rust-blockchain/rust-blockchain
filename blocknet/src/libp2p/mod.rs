@@ -6,7 +6,6 @@ use crate::{
 };
 use futures::{
     channel::mpsc,
-    future::TryFutureExt,
     select,
     sink::SinkExt,
     stream::{Stream, StreamExt, TryStreamExt},
