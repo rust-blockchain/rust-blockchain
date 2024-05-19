@@ -58,9 +58,11 @@ enum ActionItem {
         message: AnyMessage,
     },
     BroadcastListen {
-        sender: mpsc::Sender<Result<(PeerId, AnyMessage), Error>>,
+        sender: mpsc::Sender<(PeerId, AnyMessage)>,
         topic: String,
     },
+
+    Error(RunError),
 }
 
 #[derive(Debug, Error)]
@@ -95,6 +97,10 @@ pub enum Error {
     GossipsubPublish(#[from] gossipsub::PublishError),
     #[error("Noise error")]
     Noise(#[from] libp2p::noise::Error),
+    #[error("Mutladdr error")]
+    Multiaddr(#[from] libp2p::multiaddr::Error),
+    #[error("Transport error")]
+    Transport(#[from] libp2p::TransportError<std::io::Error>),
     #[error("Build error")]
     Build(Box<dyn std::error::Error + Send + Sync + 'static>),
 
@@ -122,13 +128,8 @@ where
     swarm: Swarm<Behaviour<PeerInfo>>,
     peers: Arc<RwLock<HashMap<PeerId, PeerFullInfo<PeerInfo>>>>,
     local_info: Arc<RwLock<PeerFullInfo<PeerInfo>>>,
-    broadcast_listen_senders: HashMap<
-        gossipsub::TopicHash,
-        (
-            String,
-            Vec<mpsc::Sender<Result<(PeerId, AnyMessage), Error>>>,
-        ),
-    >,
+    broadcast_listen_senders:
+        HashMap<gossipsub::TopicHash, (String, Vec<mpsc::Sender<(PeerId, AnyMessage)>>)>,
     action_receiver: mpsc::Receiver<ActionItem>,
     action_sender: mpsc::Sender<ActionItem>,
 }
@@ -138,7 +139,7 @@ where
     PeerInfo: Debug + Clone + Serialize + DeserializeOwned + Send + 'static,
 {
     pub fn new(local_info: PeerInfo) -> Result<Self, Error> {
-        let swarm = libp2p::SwarmBuilder::with_new_identity()
+        let mut swarm = libp2p::SwarmBuilder::with_new_identity()
             .with_tokio()
             .with_tcp(
                 libp2p::tcp::Config::default(),
@@ -201,6 +202,9 @@ where
             .map_err(|e| Error::Build(Box::new(e)))?
             .build();
 
+        swarm.listen_on("/ip4/0.0.0.0/udp/0/quic-v1".parse()?)?;
+        swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+
         let (action_sender, action_receiver) = mpsc::channel(ACTION_CHANNEL_BUFFER_SIZE);
 
         Ok(Self {
@@ -256,6 +260,9 @@ where
                             .1
                             .push(sender);
                     },
+                    ActionItem::Error(err) => {
+                        return Err(err.into())
+                    },
                 }
             },
             event = self.swarm.select_next_some() => {
@@ -275,12 +282,10 @@ where
 
                             if let Some(source) = message.source {
                                 for sender in &mut entry.1 {
-                                    sender.send(Ok((source, any_message.clone()))).await?;
+                                    sender.send((source, any_message.clone())).await?;
                                 }
                             } else {
-                                for sender in &mut entry.1 {
-                                    sender.send(Err(Error::UnknownOriginBroadcast(any_message.clone()))).await?;
-                                }
+                                return Err(Error::UnknownOriginBroadcast(any_message.clone()).into())
                             }
                         }
                     },
@@ -375,7 +380,8 @@ where
     fn listen(
         &mut self,
         topic: Msg::Topic,
-    ) -> impl Stream<Item = Result<Self::Event, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<impl Stream<Item = Self::Event> + Send, Self::Error>> + Send
+    {
         let (sender, receiver) = mpsc::channel(MESSAGE_CHANNEL_BUFFER_SIZE);
 
         async move {
@@ -386,15 +392,44 @@ where
                 })
                 .await?;
 
-            Ok(receiver.and_then(|(origin, msg)| async move {
-                Ok(Event {
-                    origin,
-                    value: serde_json::from_slice(&msg.serialized)
-                        .map_err(|e| Error::Codec(format!("{:?}", e)))?,
+            let action_sender = self.action_sender.clone();
+
+            Ok(receiver
+                .map(|v| Ok(v))
+                .and_then(|(origin, msg)| async move {
+                    Ok(Event {
+                        origin,
+                        value: serde_json::from_slice(&msg.serialized)
+                            .map_err(|e| Error::Codec(format!("{:?}", e)))?,
+                    })
                 })
-            }))
+                .scan((), move |(), v| {
+                    let mut action_sender = action_sender.clone();
+                    async move {
+                        match v {
+                            Ok(v) => Some(Ok(v)),
+                            Err(e) => match action_sender.send(ActionItem::Error(e)).await {
+                                Ok(()) => Some(Err(())),
+                                Err(e) => {
+                                    tracing::info!(
+                                        "Communicate with the worker service failed: {:?}",
+                                        e
+                                    );
+
+                                    // The action sender stops working. We close the stream.
+                                    None
+                                }
+                            },
+                        }
+                    }
+                })
+                .filter_map(|v| async move {
+                    match v {
+                        Ok(v) => Some(v),
+                        Err(()) => None,
+                    }
+                }))
         }
-        .try_flatten_stream()
     }
 
     fn broadcast(&mut self, message: Msg) -> impl Future<Output = Result<(), Self::Error>> + Send {

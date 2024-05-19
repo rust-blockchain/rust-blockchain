@@ -32,14 +32,16 @@ pub trait BroadcastService<Msg: Message>: Service {
     fn listen(
         &mut self,
         topic: Msg::Topic,
-    ) -> impl Stream<Item = Result<Self::Event, Self::Error>> + Send;
+    ) -> impl Future<Output = Result<impl Stream<Item = Self::Event> + Send, Self::Error>> + Send;
     fn broadcast(&mut self, message: Msg) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
 pub trait NotifyService<Not>: Service {
     type Event: Event<Origin = Self::PeerId, Value = Not>;
 
-    fn listen(&mut self) -> impl Stream<Item = Result<Self::Event, Self::Error>> + Send;
+    fn listen(
+        &mut self,
+    ) -> impl Future<Output = Result<impl Stream<Item = Self::Event> + Send, Self::Error>> + Send;
     fn notify(
         &mut self,
         peer: Self::PeerId,
@@ -57,7 +59,9 @@ pub trait RequestService<Req: Request>: Service {
 
     fn listen(
         &mut self,
-    ) -> impl Future<Output = Result<(Self::Channel, Self::Event), Self::Error>> + Send;
+    ) -> impl Future<
+        Output = Result<impl Stream<Item = (Self::Channel, Self::Event)> + Send, Self::Error>,
+    > + Send;
     fn request(
         &mut self,
         peer: Self::PeerId,
